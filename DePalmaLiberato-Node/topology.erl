@@ -1,11 +1,12 @@
 -module(topology).
--export([main/1, test/0, handler/1]).
+-export([main/1, test/0, handler/1, pinger/2]).
 
 sleep(N) -> receive after N*1000 -> ok end.
 
 % lo fanno i watcher degli amici
 pinger(ToPing, Handler) ->
   sleep(10),
+  io:format("Pinging ~p...~n", [ToPing]),
   Ref = make_ref(),
   ToPing ! {ping, self(), Ref},
   receive
@@ -36,7 +37,7 @@ handler(ListaAmici) ->
               Amici_only = lists:delete(PidMain, ListaNuovaMain),
               case length(Amici_only) of
                 N when N >= 3 -> {A, _} = lists:split(3, Amici_only),
-                                %lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
+                                lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
                                 handler(ListaAmici ++ A);
                 _ -> handler(ListaAmici)
               end;
