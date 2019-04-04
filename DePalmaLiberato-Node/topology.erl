@@ -23,7 +23,7 @@ handler(ListaAmici, PidMain) ->
       receive 
         {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]), handler(ListaAmici, PidM)
       end;
-      _ -> 
+    _ -> 
         PidHandler = self(),
         io:format("DPL: Friends: ~p~n", [ListaAmici]),
         NumeroAmici = length(ListaAmici),
@@ -32,8 +32,8 @@ handler(ListaAmici, PidMain) ->
         case NumeroAmici of
           0 -> PidMain ! {sad};
           1 -> hd(ListaAmici) ! {get_friends, PidHandler, Ref}; 
-          2 -> Node = take_one_random(ListaAmici), io:format("Ho preso a caso: ~p~n", [Node]), Node ! {get_friends, PidHandler, Ref};
-          _ -> io:format("DPL: Amici già al completo~n")
+          2 -> Node = take_one_random(ListaAmici), io:format("DPL: Ho preso a caso: ~p~n", [Node]), Node ! {get_friends, PidHandler, Ref};
+          _ -> ok
         end,
         receive
           % gestisce la morte di un amico
@@ -66,11 +66,12 @@ handler(ListaAmici, PidMain) ->
                         end;
                       1 ->
                         case NumeroAmici of
-                        N when N < 3 ->
-                          Amico = hd(Amici_only),
-                          spawn(?MODULE, pinger, [Amico, PidHandler]),
-                          handler([Amico|ListaAmici], PidMain)
-                      end
+                          N when N < 3 ->
+                            Amico = hd(Amici_only),
+                            spawn(?MODULE, pinger, [Amico, PidHandler]),
+                            handler([Amico|ListaAmici], PidMain)
+                        end;
+                      0 -> handler(ListaAmici, PidMain)
                     end;
 
           % manda la lista degli amici al main per rispondere agli amici che chiedono chi conosciamo
@@ -80,7 +81,7 @@ handler(ListaAmici, PidMain) ->
 
 take_random(N, NodesList) ->
   case N of 
-    1 -> take_one_random(NodesList);
+    1 -> [take_one_random(NodesList)];
     2 -> First = take_one_random(NodesList),
         NoFsList = lists:delete(First, NodesList),
         Second = take_one_random(NoFsList),
