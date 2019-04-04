@@ -44,9 +44,9 @@ handler(ListaAmici, PidMain) ->
           {list_from_main, ListaNuovaMain} -> %3 a caso
                     Amici_only = lists:delete(PidMain, ListaNuovaMain),
                     case length(Amici_only) of
-                      N when N >= 3 -> {A, _} = lists:split(3, Amici_only),
-                                      lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
-                                      handler(ListaAmici ++ A, PidMain);
+                      N when N >= 3 -> RandomAmici = take_random(3, Amici_only),
+                                      lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
+                                      handler(RandomAmici, PidMain);
                       _ -> handler(ListaAmici, PidMain)
                     end;
 
@@ -57,17 +57,17 @@ handler(ListaAmici, PidMain) ->
                     case length(Amici_only) of
                       N when N >= 2 ->
                         case NumeroAmici of
-                          1 -> {A, _} = lists:split(2, Amici_only),
-                                        lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
-                                        handler(ListaAmici ++ A, PidMain);
-                          2 -> {A, _} = lists:split(1, Amici_only),
-                                        lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
-                                        handler(ListaAmici ++ A, PidMain)
+                          1 ->  RandomAmici = take_random(2, Amici_only),
+                                lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
+                                handler(ListaAmici ++ RandomAmici, PidMain);
+                          2 ->  RandomAmici = take_random(1, Amici_only),
+                                lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
+                                handler(ListaAmici ++ RandomAmici, PidMain)
                         end;
                       1 ->
                         case NumeroAmici of
                           N when N < 3 ->
-                            Amico = hd(Amici_only),
+                            Amico = take_one_random(Amici_only),
                             spawn(?MODULE, pinger, [Amico, PidHandler]),
                             handler([Amico|ListaAmici], PidMain)
                         end;
@@ -148,6 +148,3 @@ test() ->
   io:format("Killing nodo3: ~p~n", [Nodo3]),
   Nodo3 ! {die},
   test_ok.
-%% TODO: register del main così per chiedere il Pid e poi usare il Pid invece del nome.
-
-
