@@ -6,7 +6,7 @@ sleep(N) -> receive after N*1000 -> ok end.
 % lo fanno i watcher degli amici
 pinger(ToPing, Handler) ->
   sleep(10),
-  io:format("DPL: Pinging ~p...~n", [ToPing]),
+  %io:format("DPL: Pinging ~p...~n", [ToPing]),
   Ref = make_ref(),
   ToPing ! {ping, self(), Ref},
   receive
@@ -23,62 +23,78 @@ handler(ListaAmici, PidMain) ->
       receive 
         {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]), handler(ListaAmici, PidM)
       end;
-    _ -> io:format("Pid già avuto: ~p~n", [PidMain])
-  end,
+      _ -> 
+        PidHandler = self(),
+        io:format("DPL: Friends: ~p~n", [ListaAmici]),
+        NumeroAmici = length(ListaAmici),
+        Ref = make_ref(),
+        % controlla i messaggi da mandare, compresa la richiesta di amici
+        case NumeroAmici of
+          0 -> PidMain ! {sad};
+          1 -> hd(ListaAmici) ! {get_friends, PidHandler, Ref}; 
+          2 -> Node = take_one_random(ListaAmici), io:format("Ho preso a caso: ~p~n", [Node]), Node ! {get_friends, PidHandler, Ref};
+          _ -> io:format("DPL: Amici già al completo~n")
+        end,
+        receive
+          % gestisce la morte di un amico
+        
+          {dead, DeadFriend} -> io:format("DPL: friend died: ~p~n", [DeadFriend]), handler(ListaAmici -- [DeadFriend], PidMain);
 
-  PidHandler = self(),
-  NumeroAmici = length(ListaAmici),
-  Ref = make_ref(),
-  % controlla i messaggi da mandare, compresa la richiesta di amici
-  case NumeroAmici of
-    0 -> PidMain ! {sad};
-    1 -> hd(ListaAmici) ! {get_friends, PidHandler, Ref}; 
-    2 -> hd(ListaAmici) ! {get_friends, PidHandler, Ref};
-    _ -> io:format("Amici già al completo~n")
-  end,
-  io:format("DPL: Friends: ~p~n", [ListaAmici]),
-  receive
-    % gestisce la morte di un amico
-  
-    {dead, DeadFriend} -> io:format("DPL: friend died: ~p~n", [DeadFriend]), handler(ListaAmici -- [DeadFriend], PidMain);
+          % riceve la lista dopo che l'abbiamo richiesta perchè si è svuotata
+          {list_from_main, ListaNuovaMain} -> %3 a caso
+                    Amici_only = lists:delete(PidMain, ListaNuovaMain),
+                    case length(Amici_only) of
+                      N when N >= 3 -> {A, _} = lists:split(3, Amici_only),
+                                      lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
+                                      handler(ListaAmici ++ A, PidMain);
+                      _ -> handler(ListaAmici, PidMain)
+                    end;
 
-    % riceve la lista dopo che l'abbiamo richiesta perchè si è svuotata
-    {list_from_main, ListaNuovaMain} -> %3 a caso
-              Amici_only = lists:delete(PidMain, ListaNuovaMain),
-              case length(Amici_only) of
-                N when N >= 3 -> {A, _} = lists:split(3, Amici_only),
-                                lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
-                                handler(ListaAmici ++ A, PidMain);
-                _ -> handler(ListaAmici, PidMain)
-              end;
+          % riceve la lista degli amici di un amico per aggiungerli/o ai nostri (risposta dei nostri get_friends)
+          {friends, Nonce, ListaNuova} -> %quanti ne mancano
+                    NoDuplicates = lists:filter(fun(Elem) -> not lists:member(Elem, ListaAmici) end, ListaNuova),
+                    Amici_only = lists:delete(PidMain, NoDuplicates),
+                    case length(Amici_only) of
+                      N when N >= 2 ->
+                        case NumeroAmici of
+                          1 -> {A, _} = lists:split(2, Amici_only),
+                                        lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
+                                        handler(ListaAmici ++ A, PidMain);
+                          2 -> {A, _} = lists:split(1, Amici_only),
+                                        lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
+                                        handler(ListaAmici ++ A, PidMain)
+                        end;
+                      1 ->
+                        case NumeroAmici of
+                        N when N < 3 ->
+                          Amico = hd(Amici_only),
+                          spawn(?MODULE, pinger, [Amico, PidHandler]),
+                          handler([Amico|ListaAmici], PidMain)
+                      end
+                    end;
 
-    % riceve la lista degli amici di un amico per aggiungerli/o ai nostri (risposta dei nostri get_friends)
-    {friends, Nonce, ListaNuova} -> %quanti ne mancano
-              NoDuplicate = lists:filter(fun(Elem) -> not lists:member(Elem, ListaAmici) end, ListaNuova),
-              Amici_only = lists:delete(PidMain, NoDuplicate),
-              case length(Amici_only) of
-                N when N >= 2 ->
-                  case NumeroAmici of
-                    1 -> {A, _} = lists:split(2, Amici_only),
-                                  lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
-                                  handler(ListaAmici ++ A, PidMain);
-                    2 -> {A, _} = lists:split(1, Amici_only),
-                                  lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, A),
-                                  handler(ListaAmici ++ A, PidMain)
-                  end;
-                1 ->
-                  case NumeroAmici of
-                   N when N < 3 ->
-                    Amico = hd(Amici_only),
-                    spawn(?MODULE, pinger, [Amico, PidHandler]),
-                    handler([Amico|ListaAmici], PidMain)
-                end
-              end;
-
-    % manda la lista degli amici al main per rispondere agli amici che chiedono chi conosciamo
-    {get_friends_from_main, Mittente, Nonce} -> PidMain ! {list_from_handler, ListaAmici, Mittente, Nonce}
-  
+          % manda la lista degli amici al main per rispondere agli amici che chiedono chi conosciamo
+          {get_friends_from_main, Mittente, Nonce} -> PidMain ! {list_from_handler, ListaAmici, Mittente, Nonce}, handler(ListaAmici, PidMain)
+      end
   end.
+
+take_random(N, NodesList) ->
+  case N of 
+    1 -> take_one_random(NodesList);
+    2 -> First = take_one_random(NodesList),
+        NoFsList = lists:delete(First, NodesList),
+        Second = take_one_random(NoFsList),
+        [First, Second];
+    3 -> First = take_one_random(NodesList),
+        NoFsList = lists:delete(First, NodesList),
+        Second = take_one_random(NoFsList),
+        NoSndList = lists:delete(Second, NoFsList), 
+        Third = take_one_random(NoSndList),
+        [First, Second, Third]
+  end.
+
+take_one_random(NodesList) ->
+  lists:nth(rand:uniform(length(NodesList)), NodesList).
 
 main(Handler) ->
   Ref = make_ref(),
@@ -88,11 +104,9 @@ main(Handler) ->
   %   _ -> io:format("Dont spawn~n")
   % end,
   %io:format("Waiting for a messagge...~n"),
-  Handler ! {main_pid, self()},
   receive
   
     {give_me_pid} -> Handler ! {here_pid, self()}, unregister(depalma_liberato), main(Handler);
-    {dieded} -> io:format("Act3 è morto.");
     % risponde ai ping di tutti
     {ping, Mittente, Nonce} -> % io:format("Sending pong...~n"),
       Mittente ! {pong, Nonce},
@@ -114,19 +128,25 @@ main(Handler) ->
 
 test() ->
    Prof = spawn(teacher_node, main, []),
-  Act1 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
-  Act2 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
-  Act3 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
-  Act4 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
-
+  % Act1 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
+  % Act2 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
+  % Act3 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
+  % Act4 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
+  Act1 = spawn(nodo1, test, []),
+  Act2 = spawn(nodo2, test, []),
+  Act3 = spawn(nodo3, test, []),
+  Act4 = spawn(nodo4, test, []),
   Handler = spawn(?MODULE, handler, [[], none]),
   Main = spawn(?MODULE, main, [Handler]),
   register(depalma_liberato, Main),
-  sleep(5).  
-
-  % sleep(15),
-  % io:format("Killing act3...~n"),
-  % depalma_liberato_3 ! {die, Main}.
+  Act3 ! {give_main, self()},
+  receive 
+    {here_main, Nodo3} -> io:format("TEST: Pid nodo 3 ricevuto~p~n", [Nodo3])
+  end,
+  sleep(15),
+  io:format("Killing nodo3: ~p~n", [Nodo3]),
+  Nodo3 ! {die},
+  test_ok.
 %% TODO: register del main così per chiedere il Pid e poi usare il Pid invece del nome.
 
 
