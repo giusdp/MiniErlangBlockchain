@@ -1,5 +1,5 @@
 -module(topology).
--export([main/1, test/0, handler/3, pinger/2]).
+-export([main/1, test/0, handler/3, pinger/2, counter_tries/2]).
 
 sleep(N) -> receive after N*1000 -> ok end.
 
@@ -25,16 +25,15 @@ counter_tries(Counter, PidHandler) ->
 
 handler(ListaAmici, PidMain, PidCounter) ->
   sleep(2),
-
+  PidHandler = self(),
   case PidMain of
     none ->
       depalma_liberato ! {give_me_pid},
-      PidCounter = spawn(fun() -> counter_tries(0, self()) end);
       receive
-        {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]), handler(ListaAmici, PidM, PidCounter)
+        {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]), 
+                            handler(ListaAmici, PidM, spawn(?MODULE, counter_tries, [0, PidHandler]))
       end;
     _ ->
-        PidHandler = self(),
         io:format("DPL: Friends: ~p~n", [ListaAmici]),
         NumeroAmici = length(ListaAmici),
         Ref = make_ref(),
@@ -47,8 +46,7 @@ handler(ListaAmici, PidMain, PidCounter) ->
         end,
         receive
 
-          {bored} ->  PidCounter = spawn(fun() -> counter_tries(0, self()) end);
-                      handler([], PidMain, PidCounter);
+          {bored} ->  handler([], PidMain, spawn(?MODULE, counter_tries, [0, PidHandler]));
           % gestisce la morte di un amico
 
           {dead, DeadFriend} -> io:format("DPL: friend died: ~p~n", [DeadFriend]), handler(ListaAmici -- [DeadFriend], PidMain, PidCounter);
@@ -75,17 +73,19 @@ handler(ListaAmici, PidMain, PidCounter) ->
                                 handler(ListaAmici ++ RandomAmici, PidMain, PidCounter);
                           2 ->  RandomAmici = take_random(1, Amici_only),
                                 lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
-                                handler(ListaAmici ++ RandomAmici, PidMain, PidCounter)
+                                handler(ListaAmici ++ RandomAmici, PidMain, PidCounter);
+                          _ -> handler(ListaAmici, PidMain, PidCounter)
                         end;
                       1 ->
                         case NumeroAmici of
                           N when N < 3 ->
                             Amico = take_one_random(Amici_only),
                             spawn(?MODULE, pinger, [Amico, PidHandler]),
-                            handler([Amico|ListaAmici], PidMain, PidCounter)
+                            handler([Amico|ListaAmici], PidMain, PidCounter);
+                          _ -> handler(ListaAmici, PidMain, PidCounter)
                         end;
-                      0 -> CounteTries ! {one_more_time},
-                           handler(ListaAmici, PidMain, PidCounter)
+                      0 -> PidCounter ! {one_more_time},
+                          handler(ListaAmici, PidMain, PidCounter)
                     end;
 
           % manda la lista degli amici al main per rispondere agli amici che chiedono chi conosciamo
