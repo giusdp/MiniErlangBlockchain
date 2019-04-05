@@ -1,5 +1,5 @@
 -module(topology).
--export([main/1, test/0, handler/2, pinger/2]).
+-export([main/1, test/0, handler/3, pinger/2]).
 
 sleep(N) -> receive after N*1000 -> ok end.
 
@@ -14,16 +14,26 @@ pinger(ToPing, Handler) ->
   after 2000 -> Handler ! {dead, ToPing}
   end.
 
-handler(ListaAmici, PidMain) ->
+counter_tries(Counter, PidHandler) ->
+  receive
+    {one_more_time} ->
+          case Counter of
+            10 -> PidHandler ! {bored};
+            _ -> counter_tries(Counter + 1, PidHandler)
+          end
+  end.
+
+handler(ListaAmici, PidMain, PidCounter) ->
   sleep(2),
 
-  case PidMain of 
-    none -> 
+  case PidMain of
+    none ->
       depalma_liberato ! {give_me_pid},
-      receive 
-        {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]), handler(ListaAmici, PidM)
+      PidCounter = spawn(fun() -> counter_tries(0, self()) end);
+      receive
+        {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]), handler(ListaAmici, PidM, PidCounter)
       end;
-    _ -> 
+    _ ->
         PidHandler = self(),
         io:format("DPL: Friends: ~p~n", [ListaAmici]),
         NumeroAmici = length(ListaAmici),
@@ -31,14 +41,17 @@ handler(ListaAmici, PidMain) ->
         % controlla i messaggi da mandare, compresa la richiesta di amici
         case NumeroAmici of
           0 -> PidMain ! {sad};
-          1 -> hd(ListaAmici) ! {get_friends, PidHandler, Ref}; 
+          1 -> hd(ListaAmici) ! {get_friends, PidHandler, Ref};
           2 -> Node = take_one_random(ListaAmici), io:format("DPL: Ho preso a caso: ~p~n", [Node]), Node ! {get_friends, PidHandler, Ref};
           _ -> ok
         end,
         receive
+
+          {bored} ->  PidCounter = spawn(fun() -> counter_tries(0, self()) end);
+                      handler([], PidMain, PidCounter);
           % gestisce la morte di un amico
-        
-          {dead, DeadFriend} -> io:format("DPL: friend died: ~p~n", [DeadFriend]), handler(ListaAmici -- [DeadFriend], PidMain);
+
+          {dead, DeadFriend} -> io:format("DPL: friend died: ~p~n", [DeadFriend]), handler(ListaAmici -- [DeadFriend], PidMain, PidCounter);
 
           % riceve la lista dopo che l'abbiamo richiesta perchè si è svuotata
           {list_from_main, ListaNuovaMain} -> %3 a caso
@@ -46,8 +59,8 @@ handler(ListaAmici, PidMain) ->
                     case length(Amici_only) of
                       N when N >= 3 -> RandomAmici = take_random(3, Amici_only),
                                       lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
-                                      handler(RandomAmici, PidMain);
-                      _ -> handler(ListaAmici, PidMain)
+                                      handler(RandomAmici, PidMain, PidCounter);
+                      _ -> handler(ListaAmici, PidMain, PidCounter)
                     end;
 
           % riceve la lista degli amici di un amico per aggiungerli/o ai nostri (risposta dei nostri get_friends)
@@ -59,28 +72,30 @@ handler(ListaAmici, PidMain) ->
                         case NumeroAmici of
                           1 ->  RandomAmici = take_random(2, Amici_only),
                                 lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
-                                handler(ListaAmici ++ RandomAmici, PidMain);
+                                handler(ListaAmici ++ RandomAmici, PidMain, PidCounter);
                           2 ->  RandomAmici = take_random(1, Amici_only),
                                 lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
-                                handler(ListaAmici ++ RandomAmici, PidMain)
+                                handler(ListaAmici ++ RandomAmici, PidMain, PidCounter)
                         end;
                       1 ->
                         case NumeroAmici of
                           N when N < 3 ->
                             Amico = take_one_random(Amici_only),
                             spawn(?MODULE, pinger, [Amico, PidHandler]),
-                            handler([Amico|ListaAmici], PidMain)
+                            handler([Amico|ListaAmici], PidMain, PidCounter)
                         end;
-                      0 -> handler(ListaAmici, PidMain)
+                      0 -> CounteTries ! {one_more_time},
+                           handler(ListaAmici, PidMain, PidCounter)
                     end;
 
           % manda la lista degli amici al main per rispondere agli amici che chiedono chi conosciamo
-          {get_friends_from_main, Mittente, Nonce} -> PidMain ! {list_from_handler, ListaAmici, Mittente, Nonce}, handler(ListaAmici, PidMain)
+          {get_friends_from_main, Mittente, Nonce} -> PidMain ! {list_from_handler, ListaAmici, Mittente, Nonce},
+                                                      handler(ListaAmici, PidMain, PidCounter)
       end
   end.
 
 take_random(N, NodesList) ->
-  case N of 
+  case N of
     1 -> [take_one_random(NodesList)];
     2 -> First = take_one_random(NodesList),
         NoFsList = lists:delete(First, NodesList),
@@ -89,7 +104,7 @@ take_random(N, NodesList) ->
     3 -> First = take_one_random(NodesList),
         NoFsList = lists:delete(First, NodesList),
         Second = take_one_random(NoFsList),
-        NoSndList = lists:delete(Second, NoFsList), 
+        NoSndList = lists:delete(Second, NoFsList),
         Third = take_one_random(NoSndList),
         [First, Second, Third]
   end.
@@ -106,7 +121,7 @@ main(Handler) ->
   % end,
   %io:format("Waiting for a messagge...~n"),
   receive
-  
+
     {give_me_pid} -> Handler ! {here_pid, self()}, unregister(depalma_liberato), main(Handler);
     % risponde ai ping di tutti
     {ping, Mittente, Nonce} -> % io:format("Sending pong...~n"),
@@ -137,11 +152,11 @@ test() ->
   Act2 = spawn(nodo2, test, []),
   Act3 = spawn(nodo3, test, []),
   Act4 = spawn(nodo4, test, []),
-  Handler = spawn(?MODULE, handler, [[], none]),
+  Handler = spawn(?MODULE, handler, [[], none, none]),
   Main = spawn(?MODULE, main, [Handler]),
   register(depalma_liberato, Main),
   Act3 ! {give_main, self()},
-  receive 
+  receive
     {here_main, Nodo3} -> io:format("TEST: Pid nodo 3 ricevuto~p~n", [Nodo3])
   end,
   sleep(15),
