@@ -1,5 +1,5 @@
 -module(topology).
--export([main/1, test/0, handler/3, pinger/2, counter_tries/2]).
+-export([main/2, test/0, handler/3, pinger/2, counter_tries/2]).
 
 sleep(N) -> receive after N*1000 -> ok end.
 
@@ -137,9 +137,11 @@ trans_handler(PidMain, ListaAmici, TransList) ->
               false -> lists:foreach(fun(Amico) -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici),
                        trans_handler(PidMain, ListaAmici, TransList ++ IDtransazione)
             end
-        end
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%
+      end
+  end.
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%
 main(Handler, TransHandler) ->
   Ref = make_ref(),
   % case H1 of
