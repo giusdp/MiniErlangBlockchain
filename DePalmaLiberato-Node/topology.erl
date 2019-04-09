@@ -129,6 +129,7 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
                             trans_handler(PidM, ListaAmici, TransList, spawn_link(?MODULE, failed_push_tracker, [self()]))
       end;
     _ ->
+      %io:format("DPL: translist = ~p~n", [TransList]),
       receive
         {update_friends, ListaNuova} -> io:format("DPL: TransHandler amici aggiornati.~p~n", [ListaNuova]),
                                         trans_handler(PidMain, ListaNuova, TransList, PidTracker);
@@ -224,10 +225,17 @@ test() ->
   end,
 
   sleep(5),
-  io:format("Sending transaction...~n"),
-  spawn(fun() -> Main ! {push, {999, ciao}} end),
+  io:format("Start transaction test...~n"),
+  spawn(fun() -> test_transactions(Main) end),
   
   sleep(20),
   io:format("Killing nodo3: ~p~n", [Nodo3]),
   Nodo3 ! {die},
   test_ok.
+
+test_transactions(Main) -> 
+  sleep(3),
+  case rand:uniform(2) of 
+    1 -> Main ! {push, {123, ciao}}, test_transactions(Main);
+    _ -> Main ! {push, {rand:uniform(100), ciao}}, test_transactions(Main)
+  end.
