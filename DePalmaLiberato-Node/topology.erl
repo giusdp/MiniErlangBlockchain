@@ -23,14 +23,15 @@ counter_tries(Counter, PidHandler) ->
           end
   end.
 
+% ultimo attore da spawnare
 handler(ListaAmici, PidMain, PidCounter) ->
   sleep(2),
   PidHandler = self(),
   case PidMain of
     none ->
-      depalma_liberato ! {give_me_pid},
+      depalma_liberato ! {give_me_pid_final},
       receive
-        {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]), 
+        {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]),
                             handler(ListaAmici, PidM, spawn(?MODULE, counter_tries, [0, PidHandler]))
       end;
     _ ->
@@ -112,7 +113,30 @@ take_random(N, NodesList) ->
 take_one_random(NodesList) ->
   lists:nth(rand:uniform(length(NodesList)), NodesList).
 
-main(Handler) ->
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% End topology - begin gossiping %%%%%%%%
+trans_handler(PidMain, ListaAmici, TransList) ->
+  sleep(2),
+  case PidMain of
+    none ->
+      depalma_liberato ! {give_me_pid, self()},
+      receive
+        {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]),
+                            trans_handler(PidM, ListaAmici, TransList)
+      end;
+    _ ->
+      receive
+        {update_friends, ListaNuova} -> trans_handler(PidMain, ListaNuova, TransList);
+        {push, {IDtransazione, Payload}} ->
+            case lists:member(IDtransazione, TransList) of
+              true -> trans_handler(PidMain, ListaAmici, TransList);
+              false -> lists:foreach(fun(Amico) -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici),
+                       trans_handler(PidMain, ListaAmici, TransList ++ IDtransazione)
+            end
+        end                     
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%
+
+main(Handler, TransHandler) ->
   Ref = make_ref(),
   % case H1 of
   %   false -> Handler = spawn(?MODULE, handler, [[], self()]),
@@ -121,8 +145,12 @@ main(Handler) ->
   % end,
   %io:format("Waiting for a messagge...~n"),
   receive
+    % adesso posso fare la unregister
+    {give_me_pid_final} -> Handler ! {here_pid, self()},
+                           unregister(depalma_liberato),
+                           main(Handler, TransHandler);
 
-    {give_me_pid} -> Handler ! {here_pid, self()}, unregister(depalma_liberato), main(Handler);
+    {give_me_pid, Richiedente} -> Richiedente ! {here_pid, self()}, main(Handler, TransHandler);
     % risponde ai ping di tutti
     {ping, Mittente, Nonce} -> % io:format("Sending pong...~n"),
       Mittente ! {pong, Nonce},
@@ -142,6 +170,7 @@ main(Handler) ->
       main(Handler)
     end.
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 test() ->
    Prof = spawn(teacher_node, main, []),
   % Act1 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
