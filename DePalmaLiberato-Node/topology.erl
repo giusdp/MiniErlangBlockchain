@@ -58,6 +58,7 @@ handler(ListaAmici, PidMain, PidCounter) ->
                     case length(Amici_only) of
                       N when N >= 3 -> RandomAmici = take_random(3, Amici_only),
                                       lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
+                                      PidMain ! {update_friends, RandomAmici},
                                       handler(RandomAmici, PidMain, PidCounter);
                       _ -> handler(ListaAmici, PidMain, PidCounter)
                     end;
@@ -71,9 +72,11 @@ handler(ListaAmici, PidMain, PidCounter) ->
                         case NumeroAmici of
                           1 ->  RandomAmici = take_random(2, Amici_only),
                                 lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
+                                PidMain ! {update_friends, ListaAmici ++ RandomAmici},
                                 handler(ListaAmici ++ RandomAmici, PidMain, PidCounter);
                           2 ->  RandomAmici = take_random(1, Amici_only),
                                 lists:foreach(fun(P) -> spawn(?MODULE, pinger, [P, PidHandler]) end, RandomAmici),
+                                PidMain ! {update_friends, ListaAmici ++ RandomAmici},
                                 handler(ListaAmici ++ RandomAmici, PidMain, PidCounter);
                           _ -> handler(ListaAmici, PidMain, PidCounter)
                         end;
@@ -82,7 +85,8 @@ handler(ListaAmici, PidMain, PidCounter) ->
                           N when N < 3 ->
                             Amico = take_one_random(Amici_only),
                             spawn(?MODULE, pinger, [Amico, PidHandler]),
-                            handler([Amico|ListaAmici], PidMain, PidCounter);
+                            PidMain ! {update_friends, [Amico | ListaAmici]},
+                            handler([Amico | ListaAmici], PidMain, PidCounter);
                           _ -> handler(ListaAmici, PidMain, PidCounter)
                         end;
                       0 -> PidCounter ! {one_more_time},
@@ -133,7 +137,7 @@ trans_handler(PidMain, ListaAmici, TransList) ->
               false -> lists:foreach(fun(Amico) -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici),
                        trans_handler(PidMain, ListaAmici, TransList ++ IDtransazione)
             end
-        end                     
+        end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%
 
 main(Handler, TransHandler) ->
@@ -145,6 +149,7 @@ main(Handler, TransHandler) ->
   % end,
   %io:format("Waiting for a messagge...~n"),
   receive
+    {update_friends, ListaNuova} -> TransHandler ! {update_friends, ListaNuova};
     % adesso posso fare la unregister
     {give_me_pid_final} -> Handler ! {here_pid, self()},
                            unregister(depalma_liberato),
