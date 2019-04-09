@@ -149,7 +149,12 @@ main(Handler, TransHandler) ->
   % end,
   %io:format("Waiting for a messagge...~n"),
   receive
-    {update_friends, ListaNuova} -> TransHandler ! {update_friends, ListaNuova};
+    {push, Transazione} -> TransHandler ! {push, Transazione},
+                           main(Handler, TransHandler);
+
+    {update_friends, ListaNuova} -> TransHandler ! {update_friends, ListaNuova},
+                                    main(Handler, TransHandler);
+
     % adesso posso fare la unregister
     {give_me_pid_final} -> Handler ! {here_pid, self()},
                            unregister(depalma_liberato),
@@ -159,20 +164,20 @@ main(Handler, TransHandler) ->
     % risponde ai ping di tutti
     {ping, Mittente, Nonce} -> % io:format("Sending pong...~n"),
       Mittente ! {pong, Nonce},
-      main(Handler);
+      main(Handler, TransHandler);
 
     % gestiscono le richieste di lista di amici dagli amici
     {get_friends, Mittente, Nonce} -> Handler ! {get_friends_from_main, Mittente, Nonce},
-      main(Handler);
+      main(Handler, TransHandler);
     {list_from_handler, ListaAmici, Mittente, Nonce} -> Mittente ! {friends, Nonce, ListaAmici},
-      main(Handler);
+      main(Handler, TransHandler);
 
     % gestiscono la lista che arriva dal prof
     {sad} -> io:format("DPL: sad received :-( ~n"),
         teacher_node ! {get_friends, self(), Ref},
-        main(Handler);
+        main(Handler, TransHandler);
     {friends, Nonce, ListaAmici} -> Handler ! {list_from_main, ListaAmici},
-      main(Handler)
+      main(Handler, TransHandler)
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
