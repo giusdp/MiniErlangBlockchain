@@ -1,5 +1,5 @@
 -module(topology).
--export([main/2, test/0, handler/3, pinger/2, counter_tries/2]).
+-export([main/2, test/0, handler/3, trans_handler/4, pinger/2, counter_tries/2, failed_push_tracker/1]).
 
 sleep(N) -> receive after N*1000 -> ok end.
 
@@ -31,7 +31,7 @@ handler(ListaAmici, PidMain, PidCounter) ->
     none ->
       depalma_liberato ! {give_me_pid_final},
       receive
-        {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]),
+        {here_pid, PidM} -> link(PidM),
                             handler(ListaAmici, PidM, spawn(?MODULE, counter_tries, [0, PidHandler]))
       end;
     _ ->
@@ -119,27 +119,47 @@ take_one_random(NodesList) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% End topology - begin gossiping %%%%%%%%
-trans_handler(PidMain, ListaAmici, TransList) ->
+trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
   sleep(2),
   case PidMain of
     none ->
       depalma_liberato ! {give_me_pid, self()},
       receive
-        {here_pid, PidM} -> io:format("DPL: Pid del main ricevuto: ~p~n", [PidM]),
-                            trans_handler(PidM, ListaAmici, TransList)
+        {here_pid, PidM} -> link(PidM),
+                            trans_handler(PidM, ListaAmici, TransList, spawn_link(?MODULE, failed_push_tracker, [self()]))
       end;
     _ ->
       receive
-        {update_friends, ListaNuova} -> trans_handler(PidMain, ListaNuova, TransList);
+        {update_friends, ListaNuova} -> io:format("DPL: TransHandler amici aggiornati.~p~n", [ListaNuova]),
+                                        trans_handler(PidMain, ListaNuova, TransList, PidTracker);
         {push, {IDtransazione, Payload}} ->
+          io:format("DPL: transazione ricevuta, IDtransazione: ~p~n", [IDtransazione]),
             case lists:member(IDtransazione, TransList) of
-              true -> trans_handler(PidMain, ListaAmici, TransList);
-              false -> lists:foreach(fun(Amico) -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici),
-                       trans_handler(PidMain, ListaAmici, TransList ++ IDtransazione)
+              true -> io:format("DPL: Transazione con id: ~p già presente~n", [IDtransazione]),
+                      trans_handler(PidMain, ListaAmici, TransList, PidTracker);
+              false -> io:format("DPL: Transazione con id: ~p è nuova, la invio agli amici: ~p ~n", [IDtransazione, ListaAmici]),
+                       case length(ListaAmici) of 
+                         0 -> io:format("DPL:TransHandler lista amici vuota, la mando al tracker.~n"),
+                              PidTracker ! {failed_push, {IDtransazione, Payload}},
+                              trans_handler(PidMain, ListaAmici, TransList, PidTracker);
+                         _ -> lists:foreach(fun(Amico) -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici),
+                              trans_handler(PidMain, ListaAmici, TransList ++ [IDtransazione], PidTracker)
+                        end
             end
       end
   end.
 
+failed_push_tracker(PidTransHandler) -> 
+  receive 
+    {failed_push, {IDtransazione, Payload}} -> sleep(5), 
+                                  PidTransHandler ! {push, {IDtransazione, Payload}},
+                                  io:format("DPL: tracker: rimando transazione~n"),
+                                  failed_push_tracker(PidTransHandler)
+  end.
+
+
+% send_failed_push(Amico, FailedPush) -> 
+%   lists:foreach(fun(Transazione) -> Amico ! {push, Transazione} end, FailedPush).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%
 main(Handler, TransHandler) ->
@@ -193,14 +213,21 @@ test() ->
   Act2 = spawn(nodo2, test, []),
   Act3 = spawn(nodo3, test, []),
   Act4 = spawn(nodo4, test, []),
+  TransHandler = spawn(?MODULE, trans_handler, [none, [], [], []]),
   Handler = spawn(?MODULE, handler, [[], none, none]),
-  Main = spawn(?MODULE, main, [Handler]),
-  register(depalma_liberato, Main),
+  Main = spawn(?MODULE, main, [Handler, TransHandler]),
+  register(depalma_liberato, Main), 
+  % TODO: Fare l'unregister nella test, dopo aver controllato che tutti hai il pid del main.
   Act3 ! {give_main, self()},
   receive
     {here_main, Nodo3} -> io:format("TEST: Pid nodo 3 ricevuto~p~n", [Nodo3])
   end,
-  sleep(15),
+
+  sleep(5),
+  io:format("Sending transaction...~n"),
+  spawn(fun() -> Main ! {push, {999, ciao}} end),
+  
+  sleep(20),
   io:format("Killing nodo3: ~p~n", [Nodo3]),
   Nodo3 ! {die},
   test_ok.
