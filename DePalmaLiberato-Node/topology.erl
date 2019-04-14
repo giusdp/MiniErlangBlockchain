@@ -1,5 +1,7 @@
 -module(topology).
--export([main/2, test/0, handler/3, trans_handler/4, pinger/2, counter_tries/2, failed_push_tracker/1]).
+-export([main/2, test/0, handler/3, trans_handler/4, 
+        pinger/2, counter_tries/2, failed_push_tracker/1,
+        block_handler/4, chain_handler/2, reconstruction_handler/4]).
 
 sleep(N) -> receive after N*1000 -> ok end.
 
@@ -144,12 +146,13 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
                               PidTracker ! {failed_push, {IDtransazione, Payload}},
                               trans_handler(PidMain, ListaAmici, TransList, PidTracker);
                          _ -> lists:foreach(fun(Amico) ->
-                              case rand:uniform(10) of
-                                    1 -> ok;
-                                    2 -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici),
-                                         Amico ! {push, {IDtransazione, Payload}} end, ListaAmici);
-                                    _ -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici)
-                              end,
+                                case rand:uniform(10) of
+                                  1 -> ok;
+                                  2 -> Amico ! {push, {IDtransazione, Payload}},
+                                      Amico ! {push, {IDtransazione, Payload}};
+                                  _ -> Amico ! {push, {IDtransazione, Payload}}
+                                end
+                              end, ListaAmici),
                               trans_handler(PidMain, ListaAmici, TransList ++ [IDtransazione], PidTracker)
                         end
             end
@@ -168,15 +171,69 @@ failed_push_tracker(PidTransHandler) ->
 % send_failed_push(Amico, FailedPush) ->
 %   lists:foreach(fun(Transazione) -> Amico ! {push, Transazione} end, FailedPush).
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Chain & Blocks %%%%%
+
+chain_handler(ListaAmici, CatenaNostra) ->
+  receive
+    {update, Mittente, Blocco} ->
+      {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
+      case proof_of_work:check({IDnuovo_blocco, Lista_di_transazioni}, Soluzione) of 
+        true -> 
+          {Head_id, Previous_id, _, _} = hd(CatenaNostra),
+          case IDblocco_precedente of
+            Head_id -> % Add normale
+              % TODO: Ritrasmissione blocco (e Aggiungere update friends)
+              chain_handler(ListaAmici, [Blocco|CatenaNostra]); 
+            _ -> % Lancia handlers e crea nuova catena
+              spawn(?MODULE, block_handler, [[CatenaNostra, self(), Mittente, Blocco]]),
+              chain_handler(ListaAmici, CatenaNostra)
+          end;
+        false -> chain_handler(ListaAmici, CatenaNostra) % blocco falso
+      end;
+    {catena_updated, Blocco, NuovaCatena} ->
+      case length(NuovaCatena) of
+        N when N > length(CatenaNostra) -> chain_handler(ListaAmici, NuovaCatena);
+        _ -> chain_handler(ListaAmici, [Blocco|CatenaNostra])
+      end
+  end.
+
+block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
+  Ref = make_ref(),
+  {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
+  % lancia algoritmo di ricostruzione
+  Mittente ! {get_head, self(), Ref},
+  receive 
+    {head, Nonce, Head} -> spawn_link(?MODULE, reconstruction_handler, [self(), Mittente, Head, [Head]]) 
+  end,
+  receive
+    {rec_handler_insert_normally} -> PidChainHandler ! {catena_updated, Blocco, [Blocco|CatenaNostra]};
+    {rec_handler_catena, CatenaMittente} -> PidChainHandler ! {catena_updated, Blocco, CatenaMittente}
+  end.
+
+reconstruction_handler(PidChainHandler, Mittente, Blocco, CatenaMittente) ->
+  Ref = make_ref(),
+  {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
+  Mittente ! {get_previous, self(), Ref, IDblocco_precedente}, 
+  receive 
+    {previous, Nonce, {Id, Id_previous, Lista_trans, Sol}} -> 
+      case proof_of_work:check({Id, Lista_trans}, Sol) of 
+        true -> % va avanti da specifica 
+          case Id of
+            none -> % abbiamo ricostruito la catena
+                PidChainHandler ! {rec_handler_catena, CatenaMittente};
+            _ -> reconstruction_handler(PidChainHandler, Mittente, {Id, Id_previous, Lista_trans, Sol},
+                                        CatenaMittente ++ [{Id, Id_previous, Lista_trans, Sol}])
+          end;
+        false -> PidChainHandler ! {rec_handler_insert_normally} % ha beccato uno con la catena falsa
+      end
+  after 10000 -> PidChainHandler ! {rec_handler_insert_normally} % il mittente e' morto mentre ricostruivamo la catena
+  end.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%%
 main(Handler, TransHandler) ->
   Ref = make_ref(),
-  % case H1 of
-  %   false -> Handler = spawn(?MODULE, handler, [[], self()]),
-  %           io:format("Handler spawned~n");
-  %   _ -> io:format("Dont spawn~n")
-  % end,
-  %io:format("Waiting for a messagge...~n"),
+  % TODO: ri lanciare gli handler se muoiono
   receive
     {push, Transazione} -> TransHandler ! {push, Transazione},
                            main(Handler, TransHandler);
