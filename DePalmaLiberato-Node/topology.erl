@@ -139,27 +139,33 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
               true -> io:format("DPL: Transazione con id: ~p già presente~n", [IDtransazione]),
                       trans_handler(PidMain, ListaAmici, TransList, PidTracker);
               false -> io:format("DPL: Transazione con id: ~p è nuova, la invio agli amici: ~p ~n", [IDtransazione, ListaAmici]),
-                       case length(ListaAmici) of 
+                       case length(ListaAmici) of
                          0 -> io:format("DPL:TransHandler lista amici vuota, la mando al tracker.~n"),
                               PidTracker ! {failed_push, {IDtransazione, Payload}},
                               trans_handler(PidMain, ListaAmici, TransList, PidTracker);
-                         _ -> lists:foreach(fun(Amico) -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici),
+                         _ -> lists:foreach(fun(Amico) ->
+                              case rand:uniform(10) of
+                                    1 -> ok;
+                                    2 -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici),
+                                         Amico ! {push, {IDtransazione, Payload}} end, ListaAmici);
+                                    _ -> Amico ! {push, {IDtransazione, Payload}} end, ListaAmici)
+                              end,
                               trans_handler(PidMain, ListaAmici, TransList ++ [IDtransazione], PidTracker)
                         end
             end
       end
   end.
 
-failed_push_tracker(PidTransHandler) -> 
-  receive 
-    {failed_push, {IDtransazione, Payload}} -> sleep(5), 
+failed_push_tracker(PidTransHandler) ->
+  receive
+    {failed_push, {IDtransazione, Payload}} -> sleep(5),
                                   PidTransHandler ! {push, {IDtransazione, Payload}},
                                   io:format("DPL: tracker: rimando transazione~n"),
                                   failed_push_tracker(PidTransHandler)
   end.
 
 
-% send_failed_push(Amico, FailedPush) -> 
+% send_failed_push(Amico, FailedPush) ->
 %   lists:foreach(fun(Transazione) -> Amico ! {push, Transazione} end, FailedPush).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%
@@ -218,7 +224,7 @@ test() ->
   TransHandler = spawn(?MODULE, trans_handler, [none, [], [], []]),
   Handler = spawn(?MODULE, handler, [[], none, none]),
   Main = spawn(?MODULE, main, [Handler, TransHandler]),
-  register(depalma_liberato, Main), 
+  register(depalma_liberato, Main),
   % TODO: Fare l'unregister nella test, dopo aver controllato che tutti hai il pid del main.
   Act3 ! {give_main, self()},
   receive
@@ -228,15 +234,15 @@ test() ->
   sleep(5),
   io:format("Start transaction test...~n"),
   spawn(fun() -> test_transactions(Main) end),
-  
+
   sleep(20),
   io:format("Killing nodo3: ~p~n", [Nodo3]),
   Nodo3 ! {die},
   test_ok.
 
-test_transactions(Main) -> 
+test_transactions(Main) ->
   sleep(3),
-  case rand:uniform(2) of 
+  case rand:uniform(2) of
     1 -> Main ! {push, {123, ciao}}, test_transactions(Main);
     _ -> Main ! {push, {rand:uniform(100), ciao}}, test_transactions(Main)
   end.
