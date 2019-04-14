@@ -205,7 +205,8 @@ main(Handler, TransHandler) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 test() ->
-   Prof = spawn(teacher_node, main, []),
+  Prof = spawn(teacher_node, main, []),
+  sleep(2), % Tempo al teacher di prepararsi
   % Act1 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
   % Act2 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
   % Act3 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
