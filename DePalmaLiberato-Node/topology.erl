@@ -179,7 +179,7 @@ chain_handler(ListaAmici, CatenaNostra) ->
       {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
       case proof_of_work:check({IDnuovo_blocco, Lista_di_transazioni}, Soluzione) of 
         true -> 
-          {Head_id, Previous_id, _, _} = hd(CatenaNostra),
+          {Head_id, _, _, _} = hd(CatenaNostra),
           case IDblocco_precedente of
             Head_id -> % Add normale
               % TODO: Ritrasmissione blocco (e Aggiungere update friends)
@@ -188,18 +188,17 @@ chain_handler(ListaAmici, CatenaNostra) ->
               spawn(?MODULE, block_handler, [[CatenaNostra, self(), Mittente, Blocco]]),
               chain_handler(ListaAmici, CatenaNostra)
           end;
-        false -> chain_handler(ListaAmici, CatenaNostra) % blocco falso
+        false -> chain_handler(ListaAmici, CatenaNostra) % blocco falso, non fare niente
       end;
     {catena_updated, Blocco, NuovaCatena} ->
       case length(NuovaCatena) of
-        N when N > length(CatenaNostra) -> chain_handler(ListaAmici, NuovaCatena);
-        _ -> chain_handler(ListaAmici, [Blocco|CatenaNostra])
+        N when N > length(CatenaNostra) -> chain_handler(ListaAmici, NuovaCatena); % sostituisci la catena
+        _ -> chain_handler(ListaAmici, [Blocco|CatenaNostra]) % usa la tua catena + il nuovo blocco dall'update
       end
   end.
 
 block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
   Ref = make_ref(),
-  {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
   % lancia algoritmo di ricostruzione
   Mittente ! {get_head, self(), Ref},
   receive 
@@ -231,39 +230,41 @@ reconstruction_handler(PidChainHandler, Mittente, Blocco, CatenaMittente) ->
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%%
-main(Handler, TransHandler) ->
+main(Handler, TransHandler, ChainHandler) ->
   Ref = make_ref(),
   % TODO: ri lanciare gli handler se muoiono
   receive
     {push, Transazione} -> TransHandler ! {push, Transazione},
-                           main(Handler, TransHandler);
+                           main(Handler, TransHandler, ChainHandler);
 
     {update_friends, ListaNuova} -> TransHandler ! {update_friends, ListaNuova},
-                                    main(Handler, TransHandler);
+                                    main(Handler, TransHandler, ChainHandler);
 
     % adesso posso fare la unregister
     {give_me_pid_final} -> Handler ! {here_pid, self()},
                            unregister(depalma_liberato),
-                           main(Handler, TransHandler);
+                           main(Handler, TransHandler, ChainHandler);
 
-    {give_me_pid, Richiedente} -> Richiedente ! {here_pid, self()}, main(Handler, TransHandler);
+    {give_me_pid, Richiedente} -> Richiedente ! {here_pid, self()}, main(Handler, TransHandler, ChainHandler);
     % risponde ai ping di tutti
     {ping, Mittente, Nonce} -> % io:format("Sending pong...~n"),
       Mittente ! {pong, Nonce},
-      main(Handler, TransHandler);
+      main(Handler, TransHandler, ChainHandler);
 
     % gestiscono le richieste di lista di amici dagli amici
     {get_friends, Mittente, Nonce} -> Handler ! {get_friends_from_main, Mittente, Nonce},
-      main(Handler, TransHandler);
+      main(Handler, TransHandler, ChainHandler);
     {list_from_handler, ListaAmici, Mittente, Nonce} -> Mittente ! {friends, Nonce, ListaAmici},
-      main(Handler, TransHandler);
+      main(Handler, TransHandler, ChainHandler);
 
     % gestiscono la lista che arriva dal prof
     {sad} -> io:format("DPL: sad received :-( ~n"),
         teacher_node ! {get_friends, self(), Ref},
-        main(Handler, TransHandler);
+        main(Handler, TransHandler, ChainHandler);
     {friends, Nonce, ListaAmici} -> Handler ! {list_from_main, ListaAmici},
-      main(Handler, TransHandler)
+        main(Handler, TransHandler, ChainHandler);
+    {update, Mittente, Blocco} -> ChainHandler ! {update, Mittente, Blocco},
+        main(Handler, TransHandler, ChainHandler)
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
