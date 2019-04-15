@@ -184,6 +184,8 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
       end;
     _ ->
       receive
+        {get_previous, Mittente, Nonce, Idblocco} -> spawn(fun() -> search_previous_block(Mittente, Nonce, Idblocco, CatenaNostra) end);
+        
         {update_friends, ListaNuova} -> chain_handler(PidMain, ListaNuova, CatenaNostra);
         {update, Mittente, Blocco} ->
           {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
@@ -208,6 +210,18 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
                   chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]) % usa la tua catena + il nuovo blocco dall'update
           end
       end
+  end.
+
+search_previous_block(Mittente, Nonce, IDBlocco, Catena) ->
+  case length(Catena) of 
+    0 -> not_found;
+    _ ->
+        [Head | Tail] = Catena,
+        {ID, _, _, _} = Head,
+        case ID of
+          IDBlocco -> Mittente ! {previous, Nonce, Head}; % Mittente ! {previous, Nonce, Blocco}
+          _ -> search_previous_block(Mittente, Nonce, IDBlocco, Tail)
+        end
   end.
 
 block_retransmission(ListaAmici, PidSender, Blocco) ->
@@ -288,7 +302,8 @@ main(Handler, TransHandler, ChainHandler) ->
     {friends, Nonce, ListaAmici} -> Handler ! {list_from_main, ListaAmici},
         main(Handler, TransHandler, ChainHandler);
     {update, Mittente, Blocco} -> ChainHandler ! {update, Mittente, Blocco},
-        main(Handler, TransHandler, ChainHandler)
+        main(Handler, TransHandler, ChainHandler);
+    {get_previous, Mittente, Nonce, Idblocco_precedente} -> ChainHandler ! {get_previous, Mittente, Nonce, Idblocco_precedente}
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
