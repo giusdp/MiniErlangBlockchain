@@ -188,10 +188,13 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
         {get_head, Mittente, Nonce} -> Mittente ! {head, Nonce, hd(CatenaNostra)};
 
         {update_friends, ListaNuova} -> chain_handler(PidMain, ListaNuova, CatenaNostra);
+
         {update, Mittente, Blocco} ->
           {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
           case proof_of_work:check({IDnuovo_blocco, Lista_di_transazioni}, Soluzione) of 
             true -> 
+              % TODO: contattare il main per dire che il blocco Blocco e' stato aggiunto
+              % TODO: quindi il main deve dire al transHandler di rimuovere le trans contenute in Blocco
               {Head_id, _, _, _} = hd(CatenaNostra),
               case IDblocco_precedente of
                 Head_id -> % Add normale
