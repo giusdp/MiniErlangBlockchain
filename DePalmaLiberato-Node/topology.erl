@@ -185,7 +185,8 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
     _ ->
       receive
         {get_previous, Mittente, Nonce, Idblocco} -> spawn(fun() -> search_previous_block(Mittente, Nonce, Idblocco, CatenaNostra) end);
-        
+        {get_head, Mittente, Nonce} -> Mittente ! {head, Nonce, hd(CatenaNostra)};
+
         {update_friends, ListaNuova} -> chain_handler(PidMain, ListaNuova, CatenaNostra);
         {update, Mittente, Blocco} ->
           {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
@@ -269,7 +270,6 @@ reconstruction_handler(PidChainHandler, Mittente, Blocco, CatenaMittente) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%%
 main(Handler, TransHandler, ChainHandler) ->
   Ref = make_ref(),
-  % TODO: ri lanciare gli handler se muoiono
   receive
     {push, Transazione} -> TransHandler ! {push, Transazione},
                            main(Handler, TransHandler, ChainHandler);
@@ -303,7 +303,8 @@ main(Handler, TransHandler, ChainHandler) ->
         main(Handler, TransHandler, ChainHandler);
     {update, Mittente, Blocco} -> ChainHandler ! {update, Mittente, Blocco},
         main(Handler, TransHandler, ChainHandler);
-    {get_previous, Mittente, Nonce, Idblocco_precedente} -> ChainHandler ! {get_previous, Mittente, Nonce, Idblocco_precedente}
+    {get_previous, Mittente, Nonce, Idblocco_precedente} -> ChainHandler ! {get_previous, Mittente, Nonce, Idblocco_precedente};
+    {get_head, Mittente, Nonce} -> ChainHandler ! {get_head, Mittente, Nonce}
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
