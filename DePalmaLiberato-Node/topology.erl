@@ -1,7 +1,7 @@
 -module(topology).
--export([main/2, test/0, handler/3, trans_handler/4, 
+-export([main/3, test/0, handler/3, trans_handler/4, 
         pinger/2, counter_tries/2, failed_push_tracker/1,
-        block_handler/4, chain_handler/2, reconstruction_handler/4]).
+        block_handler/4, chain_handler/3, reconstruction_handler/4]).
 
 sleep(N) -> receive after N*1000 -> ok end.
 
@@ -173,29 +173,52 @@ failed_push_tracker(PidTransHandler) ->
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Chain & Blocks %%%%%
 
-chain_handler(ListaAmici, CatenaNostra) ->
-  receive
-    {update, Mittente, Blocco} ->
-      {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
-      case proof_of_work:check({IDnuovo_blocco, Lista_di_transazioni}, Soluzione) of 
-        true -> 
-          {Head_id, _, _, _} = hd(CatenaNostra),
-          case IDblocco_precedente of
-            Head_id -> % Add normale
-              % TODO: Ritrasmissione blocco (e Aggiungere update friends)
-              chain_handler(ListaAmici, [Blocco|CatenaNostra]); 
-            _ -> % Lancia handlers e crea nuova catena
-              spawn(?MODULE, block_handler, [[CatenaNostra, self(), Mittente, Blocco]]),
-              chain_handler(ListaAmici, CatenaNostra)
-          end;
-        false -> chain_handler(ListaAmici, CatenaNostra) % blocco falso, non fare niente
+chain_handler(PidMain, ListaAmici, CatenaNostra) ->
+  sleep(2),
+  case PidMain of
+    none ->
+      depalma_liberato ! {give_me_pid, self()},
+      receive
+        {here_pid, PidM} -> link(PidM),
+                            chain_handler(PidM, ListaAmici, CatenaNostra)
       end;
-    {catena_updated, Blocco, NuovaCatena} ->
-      case length(NuovaCatena) of
-        N when N > length(CatenaNostra) -> chain_handler(ListaAmici, NuovaCatena); % sostituisci la catena
-        _ -> chain_handler(ListaAmici, [Blocco|CatenaNostra]) % usa la tua catena + il nuovo blocco dall'update
+    _ ->
+      receive
+        {update_friends, ListaNuova} -> chain_handler(PidMain, ListaNuova, CatenaNostra);
+        {update, Mittente, Blocco} ->
+          {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
+          case proof_of_work:check({IDnuovo_blocco, Lista_di_transazioni}, Soluzione) of 
+            true -> 
+              {Head_id, _, _, _} = hd(CatenaNostra),
+              case IDblocco_precedente of
+                Head_id -> % Add normale
+                  block_retransmission(ListaAmici, self(), Blocco),
+                  chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
+                _ -> % Lancia handlers e crea nuova catena
+                  spawn(?MODULE, block_handler, [[CatenaNostra, self(), Mittente, Blocco]]),
+                  chain_handler(PidMain, ListaAmici, CatenaNostra)
+              end;
+            false -> chain_handler(PidMain, ListaAmici, CatenaNostra) % blocco falso, non fare niente
+          end;
+        {catena_updated, Blocco, NuovaCatena} ->
+          case length(NuovaCatena) of
+            N when N > length(CatenaNostra) ->  block_retransmission(ListaAmici, self(), Blocco),
+                                                chain_handler(PidMain, ListaAmici, NuovaCatena); % sostituisci la catena
+            _ ->  block_retransmission(ListaAmici, self(), Blocco),
+                  chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]) % usa la tua catena + il nuovo blocco dall'update
+          end
       end
   end.
+
+block_retransmission(ListaAmici, PidSender, Blocco) ->
+  lists:foreach(fun(Amico) ->
+    case rand:uniform(10) of
+      1 -> ok;
+      2 -> Amico ! {update, PidSender, Blocco},
+          Amico ! {update, PidSender, Blocco};
+      _ -> Amico ! {update, PidSender, Blocco}
+    end
+  end, ListaAmici).
 
 block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
   Ref = make_ref(),
@@ -211,7 +234,7 @@ block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
 
 reconstruction_handler(PidChainHandler, Mittente, Blocco, CatenaMittente) ->
   Ref = make_ref(),
-  {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
+  {_, IDblocco_precedente, _, _} = Blocco,
   Mittente ! {get_previous, self(), Ref, IDblocco_precedente}, 
   receive 
     {previous, Nonce, {Id, Id_previous, Lista_trans, Sol}} -> 
@@ -238,6 +261,7 @@ main(Handler, TransHandler, ChainHandler) ->
                            main(Handler, TransHandler, ChainHandler);
 
     {update_friends, ListaNuova} -> TransHandler ! {update_friends, ListaNuova},
+                                    ChainHandler ! {update_friends, ListaNuova},
                                     main(Handler, TransHandler, ChainHandler);
 
     % adesso posso fare la unregister
@@ -279,11 +303,12 @@ test() ->
   Act2 = spawn(nodo2, test, []),
   Act3 = spawn(nodo3, test, []),
   Act4 = spawn(nodo4, test, []),
+  ChainHandler = spawn(?MODULE, chain_handler, [none, [], []]),
   TransHandler = spawn(?MODULE, trans_handler, [none, [], [], []]),
   Handler = spawn(?MODULE, handler, [[], none, none]),
-  Main = spawn(?MODULE, main, [Handler, TransHandler]),
+  Main = spawn(?MODULE, main, [Handler, TransHandler, ChainHandler]),
   register(depalma_liberato, Main),
-  % TODO: Fare l'unregister nella test, dopo aver controllato che tutti hai il pid del main.
+  % TODO: Fare l'unregister nella test, dopo aver controllato che tutti hanno il pid del main.
   Act3 ! {give_main, self()},
   receive
     {here_main, Nodo3} -> io:format("TEST: Pid nodo 3 ricevuto~p~n", [Nodo3])
@@ -291,16 +316,20 @@ test() ->
 
   sleep(5),
   io:format("Start transaction test...~n"),
-  spawn(fun() -> test_transactions(Main) end),
+  spawn(fun() -> test_transactions(Main, 0) end),
 
   sleep(20),
   io:format("Killing nodo3: ~p~n", [Nodo3]),
   Nodo3 ! {die},
   test_ok.
 
-test_transactions(Main) ->
+test_transactions(Main, Counter) ->
   sleep(3),
-  case rand:uniform(2) of
-    1 -> Main ! {push, {123, ciao}}, test_transactions(Main);
-    _ -> Main ! {push, {rand:uniform(100), ciao}}, test_transactions(Main)
+  case Counter of 
+    20 -> ok;
+    _ ->
+          case rand:uniform(2) of
+            1 -> Main ! {push, {123, ciao}}, test_transactions(Main, Counter + 1);
+            _ -> Main ! {push, {rand:uniform(100), ciao}}, test_transactions(Main, Counter + 1)
+          end
   end.
