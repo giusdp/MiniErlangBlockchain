@@ -2,7 +2,7 @@
 -export([main/4, test/0, handler/3, trans_handler/4, 
         pinger/2, counter_tries/2, failed_push_tracker/1,
         block_handler/4, chain_handler/3, reconstruction_handler/4,
-        miner_handler/2]).
+        miner_handler/3]).
 
 sleep(N) -> receive after N*1000 -> ok end.
 
@@ -143,7 +143,7 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
         {update_friends, ListaNuova} -> io:format("DPL: TransHandler amici aggiornati.~p~n", [ListaNuova]),
                                         trans_handler(PidMain, ListaNuova, TransList, PidTracker);
         {push, {IDtransazione, Payload}} ->
-          io:format("DPL: transazione ricevuta, IDtransazione: ~p~n", [IDtransazione]),
+          %io:format("DPL: transazione ricevuta, IDtransazione: ~p~n", [IDtransazione]),
             case lists:member(IDtransazione, TransList) of
               true -> %io:format("DPL: Transazione con id: ~p già presente~n", [IDtransazione]),
                       trans_handler(PidMain, ListaAmici, TransList, PidTracker);
@@ -193,13 +193,16 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
     _ ->
       io:format("DPL: ChainHandler catena: ~p~n", [CatenaNostra]), 
       receive
-        {get_previous, Mittente, Nonce, Idblocco} -> spawn(fun() -> give_previous_block(Mittente, Nonce, Idblocco, CatenaNostra) end), 
-          chain_handler(PidM, ListaAmici, CatenaNostra);
+        {get_previous, Mittente, Nonce, Idblocco} -> 
+          spawn(fun() -> give_previous_block(Mittente, Nonce, Idblocco, CatenaNostra) end), 
+          chain_handler(PidMain, ListaAmici, CatenaNostra);
+
         {get_head, Mittente, Nonce} -> case length(CatenaNostra) of 
                                         0 ->  self() ! {get_head, Mittente, Nonce}, 
-                                              chain_handler(PidM, ListaAmici, CatenaNostra);
+                                              chain_handler(PidMain, ListaAmici, CatenaNostra);
                                         _ ->  Mittente ! {head, Nonce, hd(CatenaNostra)}, 
-                                              chain_handler(PidM, ListaAmici, CatenaNostra);
+                                              chain_handler(PidMain, ListaAmici, CatenaNostra)
+                                        end;
 
         {update_friends, ListaNuova} -> chain_handler(PidMain, ListaNuova, CatenaNostra);
 
@@ -214,17 +217,26 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
           case proof_of_work:check({IDnuovo_blocco, Lista_di_transazioni}, Soluzione) of 
             true -> 
               PidMain ! {remove_trans, Lista_di_transazioni},
-              {Head_id, _, _, _} = hd(CatenaNostra),
-              case IDblocco_precedente of
-                Head_id -> % Add normale
+              case length(CatenaNostra) of 
+
+                0 -> % primo blocco che si aggiunge, aggiungi direttamente
                   block_retransmission(ListaAmici, self(), Blocco),
                   chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
-                _ -> % Lancia handlers e crea nuova catena
-                  spawn(?MODULE, block_handler, [[CatenaNostra, self(), Mittente, Blocco]]),
-                  chain_handler(PidMain, ListaAmici, CatenaNostra)
+                _ ->
+                {Head_id, _, _, _} = hd(CatenaNostra),
+                case IDblocco_precedente of
+                  Head_id -> % Add normale
+                    block_retransmission(ListaAmici, self(), Blocco),
+                    chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
+                  _ -> % Lancia handlers e crea nuova catena
+                    spawn(?MODULE, block_handler, [[CatenaNostra, self(), Mittente, Blocco]]),
+                    chain_handler(PidMain, ListaAmici, CatenaNostra)
+                end
               end;
+            
             false -> chain_handler(PidMain, ListaAmici, CatenaNostra) % blocco falso, non fare niente
           end;
+        
         {catena_updated, Blocco, NuovaCatena} ->
           case length(NuovaCatena) of
             N when N > length(CatenaNostra) ->  block_retransmission(ListaAmici, self(), Blocco),
@@ -232,6 +244,7 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
             _ ->  block_retransmission(ListaAmici, self(), Blocco),
                   chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]) % usa la tua catena + il nuovo blocco dall'update
           end
+
       end
   end.
 
@@ -289,25 +302,37 @@ reconstruction_handler(PidChainHandler, Mittente, Blocco, CatenaMittente) ->
   end.
 
 
-miner_handler(TransHandler, ChainHandler) ->
+miner_handler(TransHandler, ChainHandler, IsFirst) ->
   sleep(20),
+  io:format("DPL: Mining about to start~n"),
   TransHandler ! {give_trans_list, self()},
   receive
-    {trans_list_empty} -> miner_handler(TransHandler, ChainHandler);
-    {trans_list_non_empty, TransList} ->       
-      ChainHandler ! {get_head, self(), make_ref()},
-      receive
-        {head, Nonce, Blocco} ->
-          {IDBlocco, _, _, _} = Blocco,
+    {trans_list_empty} -> ok;
+
+    {trans_list_non_empty, TransList} ->
+      case IsFirst of 
+        true -> 
           io:format("DPL: mining started!~n"),
-          PidMiner = spawn(fun() -> miner(TransList, IDBlocco, self()) end),
+          PidMiner = spawn(fun() -> miner(TransList, none, self()) end),
           receive
             {stop_mining} -> io:format("DPL: mining ABORTED!~n"), exit(PidMiner, kill);
-            {mining_finished, Sol} -> io:format("DPL: Blocco minato!~n"), ChainHandler ! {block_mined, {make_ref(), IDBlocco, TransList, Sol}}
+            {mining_finished, Sol} -> io:format("DPL: Blocco minato!~n"), ChainHandler ! {block_mined, {make_ref(), none, TransList, Sol}}
+          end;
+        false ->
+          ChainHandler ! {get_head, self(), make_ref()},
+          receive
+            {head, Nonce, Blocco} ->
+              {IDBlocco, _, _, _} = Blocco,
+              io:format("DPL: mining started!~n"),
+              PidMiner = spawn(fun() -> miner(TransList, IDBlocco, self()) end),
+              receive
+                {stop_mining} -> io:format("DPL: mining ABORTED!~n"), exit(PidMiner, kill);
+                {mining_finished, Sol} -> io:format("DPL: Blocco minato!~n"), ChainHandler ! {block_mined, {make_ref(), IDBlocco, TransList, Sol}}
+              end
           end
-      end,
-  miner_handler(TransHandler, ChainHandler)
-  end.
+      end
+  end,
+  miner_handler(TransHandler, ChainHandler, false).
 
 miner(TransList, IDBlocco, Pid) -> 
     Sol = proof_of_work:solve({IDBlocco, TransList}),
@@ -367,7 +392,7 @@ test() ->
   Act3 = spawn(nodo3, test, []),
   ChainHandler = spawn(?MODULE, chain_handler, [none, [], []]),
   TransHandler = spawn(?MODULE, trans_handler, [none, [], [], []]),
-  MinerHandler = spawn (?MODULE, miner_handler, [TransHandler, ChainHandler]),
+  MinerHandler = spawn (?MODULE, miner_handler, [TransHandler, ChainHandler, true]),
   FriendHandler = spawn(?MODULE, handler, [[], none, none]),
   Main = spawn(?MODULE, main, [FriendHandler, TransHandler, ChainHandler, MinerHandler]),
   register(depalma_liberato, Main),
