@@ -1,7 +1,8 @@
 -module(topology).
 -export([main/3, test/0, handler/3, trans_handler/4, 
         pinger/2, counter_tries/2, failed_push_tracker/1,
-        block_handler/4, chain_handler/3, reconstruction_handler/4]).
+        block_handler/4, chain_handler/3, reconstruction_handler/4,
+        mining_handler/2]).
 
 sleep(N) -> receive after N*1000 -> ok end.
 
@@ -133,6 +134,7 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
     _ ->
       %io:format("DPL: translist = ~p~n", [TransList]),
       receive
+        {remove_trans, ToBeRemoved} -> trans_handler(PidMain, ListaAmici, lists:delete(ToBeRemoved, TransList), PidTracker);
         {update_friends, ListaNuova} -> io:format("DPL: TransHandler amici aggiornati.~p~n", [ListaNuova]),
                                         trans_handler(PidMain, ListaNuova, TransList, PidTracker);
         {push, {IDtransazione, Payload}} ->
@@ -189,12 +191,17 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
 
         {update_friends, ListaNuova} -> chain_handler(PidMain, ListaNuova, CatenaNostra);
 
+        {block_mined, Blocco} ->
+          {_, _, Lista_di_transazioni, _} = Blocco,
+          PidMain ! {remove_trans, Lista_di_transazioni},
+          block_retransmission(ListaAmici, self(), Blocco),
+          chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]);
+
         {update, Mittente, Blocco} ->
           {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
           case proof_of_work:check({IDnuovo_blocco, Lista_di_transazioni}, Soluzione) of 
             true -> 
-              % TODO: contattare il main per dire che il blocco Blocco e' stato aggiunto
-              % TODO: quindi il main deve dire al transHandler di rimuovere le trans contenute in Blocco
+              PidMain ! {remove_trans, Lista_di_transazioni},
               {Head_id, _, _, _} = hd(CatenaNostra),
               case IDblocco_precedente of
                 Head_id -> % Add normale
@@ -270,6 +277,29 @@ reconstruction_handler(PidChainHandler, Mittente, Blocco, CatenaMittente) ->
   end.
 
 
+mining_handler(TransHandler, ChainHandler) ->
+  sleep(10),
+  TransHandler ! {give_trans_list, self()},
+  receive
+    {trans_list_empty} -> mining_handler(TransHandler, ChainHandler);
+    {trans_list_non_empty, TransList} ->       
+      ChainHandler ! {get_head, self(), make_ref()},
+      receive
+        {head, Nonce, Blocco} ->
+          {IDBlocco, _, _, _} = Blocco,
+          PidMiner = spawn(fun() -> miner(TransList, IDBlocco, self()) end),
+          receive
+            {stop_mining} -> exit(PidMiner, kill);
+            {mining_finished, Sol} -> ChainHandler ! {block_mined, {make_ref(), IDBlocco, TransList, Sol}}
+          end
+      end,
+  mining_handler(TransHandler, ChainHandler)
+  end.
+
+miner(TransList, IDBlocco, Pid) -> 
+    Sol = proof_of_work:solve({IDBlocco, TransList}),
+    Pid ! {mining_finished, Sol}.
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%%
 main(Handler, TransHandler, ChainHandler) ->
   Ref = make_ref(),
@@ -307,8 +337,9 @@ main(Handler, TransHandler, ChainHandler) ->
     {update, Mittente, Blocco} -> ChainHandler ! {update, Mittente, Blocco},
         main(Handler, TransHandler, ChainHandler);
     {get_previous, Mittente, Nonce, Idblocco_precedente} -> ChainHandler ! {get_previous, Mittente, Nonce, Idblocco_precedente};
-    {get_head, Mittente, Nonce} -> ChainHandler ! {get_head, Mittente, Nonce}
-    end.
+    {get_head, Mittente, Nonce} -> ChainHandler ! {get_head, Mittente, Nonce};
+    {remove_trans, ToBeRemoved} -> TransHandler ! {remove_trans, ToBeRemoved}
+  end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 test() ->
