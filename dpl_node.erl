@@ -184,7 +184,7 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
       end;
     _ ->
       receive
-        {get_previous, Mittente, Nonce, Idblocco} -> spawn(fun() -> search_previous_block(Mittente, Nonce, Idblocco, CatenaNostra) end);
+        {get_previous, Mittente, Nonce, Idblocco} -> spawn(fun() -> give_previous_block(Mittente, Nonce, Idblocco, CatenaNostra) end);
         {get_head, Mittente, Nonce} -> Mittente ! {head, Nonce, hd(CatenaNostra)};
 
         {update_friends, ListaNuova} -> chain_handler(PidMain, ListaNuova, CatenaNostra);
@@ -216,7 +216,7 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
       end
   end.
 
-search_previous_block(Mittente, Nonce, IDBlocco, Catena) ->
+give_previous_block(Mittente, Nonce, IDBlocco, Catena) ->
   case length(Catena) of 
     0 -> not_found;
     _ ->
@@ -224,7 +224,7 @@ search_previous_block(Mittente, Nonce, IDBlocco, Catena) ->
         {ID, _, _, _} = Head,
         case ID of
           IDBlocco -> Mittente ! {previous, Nonce, Head}; % Mittente ! {previous, Nonce, Blocco}
-          _ -> search_previous_block(Mittente, Nonce, IDBlocco, Tail)
+          _ -> give_previous_block(Mittente, Nonce, IDBlocco, Tail)
         end
   end.
 
