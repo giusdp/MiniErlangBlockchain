@@ -359,6 +359,7 @@ test() ->
   Main = spawn(?MODULE, main, [Handler, TransHandler, ChainHandler]),
   register(depalma_liberato, Main),
   % TODO: Fare l'unregister nella test, dopo aver controllato che tutti hanno il pid del main.
+  % TODO: gestire la morte
   Act3 ! {give_main, self()},
   receive
     {here_main, Nodo3} -> io:format("TEST: Pid nodo 3 ricevuto~p~n", [Nodo3])
@@ -378,8 +379,8 @@ test_transactions(Main, Counter) ->
   case Counter of 
     20 -> ok;
     _ ->
-          case rand:uniform(2) of
-            1 -> Main ! {push, {123, ciao}}, test_transactions(Main, Counter + 1);
-            _ -> Main ! {push, {rand:uniform(100), ciao}}, test_transactions(Main, Counter + 1)
-          end
+        case rand:uniform(2) of
+          1 -> Main ! {push, {123, ciao}}, test_transactions(Main, Counter + 1);
+          _ -> Main ! {push, {rand:uniform(100), ciao}}, test_transactions(Main, Counter + 1)
+        end
   end.
