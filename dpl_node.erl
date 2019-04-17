@@ -38,14 +38,15 @@ handler(ListaAmici, PidMain, PidCounter) ->
                             handler(ListaAmici, PidM, spawn(?MODULE, counter_tries, [0, PidHandler]))
       end;
     _ ->
-        io:format("DPL: Friends: ~p~n", [ListaAmici]),
+        %io:format("DPL: Friends: ~p~n", [ListaAmici]),
         NumeroAmici = length(ListaAmici),
         Ref = make_ref(),
         % controlla i messaggi da mandare, compresa la richiesta di amici
         case NumeroAmici of
           0 -> PidMain ! {sad};
           1 -> hd(ListaAmici) ! {get_friends, PidHandler, Ref};
-          2 -> Node = take_one_random(ListaAmici), io:format("DPL: Ho preso a caso: ~p~n", [Node]), Node ! {get_friends, PidHandler, Ref};
+          2 -> Node = take_one_random(ListaAmici), %io:format("DPL: Ho preso a caso: ~p~n", [Node]), 
+               Node ! {get_friends, PidHandler, Ref};
           _ -> ok
         end,
         receive
@@ -53,7 +54,8 @@ handler(ListaAmici, PidMain, PidCounter) ->
           {bored} ->  handler([], PidMain, spawn(?MODULE, counter_tries, [0, PidHandler]));
           % gestisce la morte di un amico
 
-          {dead, DeadFriend} -> io:format("DPL: friend died: ~p~n", [DeadFriend]), handler(ListaAmici -- [DeadFriend], PidMain, PidCounter);
+          {dead, DeadFriend} -> %io:format("DPL: friend died: ~p~n", [DeadFriend]),
+            handler(ListaAmici -- [DeadFriend], PidMain, PidCounter);
 
           % riceve la lista dopo che l'abbiamo richiesta perchè si è svuotata
           {list_from_main, ListaNuovaMain} -> %3 a caso
