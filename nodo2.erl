@@ -139,7 +139,9 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
                                         _ -> Sender ! {trans_list_non_empty, TransList}
                                       end,
                                       trans_handler(PidMain, ListaAmici, TransList, PidTracker);
-        {remove_trans, ToBeRemoved} -> trans_handler(PidMain, ListaAmici, lists:delete(ToBeRemoved, TransList), PidTracker);
+        {remove_trans, ToBeRemoved} ->
+          trans_handler(PidMain, ListaAmici, 
+            lists:filter(fun(Elem) -> not lists:member(Elem, ToBeRemoved) end, TransList), PidTracker);
         {update_friends, ListaNuova} -> %io:format("Nodo2: TransHandler amici aggiornati.~p~n", [ListaNuova]),
                                         trans_handler(PidMain, ListaNuova, TransList, PidTracker);
         {push, {IDtransazione, Payload}} ->
