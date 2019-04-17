@@ -136,9 +136,11 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
       receive
         {give_trans_list, Sender} ->  case length(TransList) of 
                                         0 -> Sender ! {trans_list_empty};
-                                        _ -> Sender ! {trans_list_non_empty, TransList}
+                                        N when N =< 10 -> Sender ! {trans_list_non_empty, TransList};
+                                        _ -> Sender ! {trans_list_non_empty, lists:sublist(TransList, 10)}
                                       end,
                                       trans_handler(PidMain, ListaAmici, TransList, PidTracker); 
+
         {remove_trans, ToBeRemoved} -> trans_handler(PidMain, ListaAmici, lists:delete(ToBeRemoved, TransList), PidTracker);
         {update_friends, ListaNuova} -> io:format("DPL: TransHandler amici aggiornati.~p~n", [ListaNuova]),
                                         trans_handler(PidMain, ListaNuova, TransList, PidTracker);
@@ -224,6 +226,7 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
           {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
           case proof_of_work:check({IDnuovo_blocco, Lista_di_transazioni}, Soluzione) of 
             true -> 
+              io:format("DPL: blocco da aggiungere ricevuto~n"),
               PidMain ! {remove_trans, Lista_di_transazioni},
               case length(CatenaNostra) of 
 
@@ -314,7 +317,7 @@ miner_handler(TransHandler, ChainHandler) ->
   sleep(10),
   TransHandler ! {give_trans_list, self()},
   receive
-    {trans_list_empty} -> io:format("DPL: lista transazioni vuota~n");
+    {trans_list_empty} -> restart;
 
     {trans_list_non_empty, TransList} ->
       ChainHandler ! {give_head, self()},
@@ -324,7 +327,8 @@ miner_handler(TransHandler, ChainHandler) ->
           PidMiner = spawn(?MODULE, miner, [TransList, none, self()]),
           receive
             {stop_mining} -> io:format("DPL: mining ABORTED!~n"), exit(PidMiner, kill);
-            {mining_finished, Sol} -> io:format("DPL: Blocco minato!~n"), ChainHandler ! {block_mined, {make_ref(), none, TransList, Sol}}
+            {mining_finished, Sol} -> io:format("DPL: Blocco minato!~n"), 
+              ChainHandler ! {block_mined, {make_ref(), none, TransList, Sol}}
           end;
 
         {head, Blocco} ->
