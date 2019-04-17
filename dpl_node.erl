@@ -211,7 +211,7 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
                                   end;
 
         {get_head, Mittente, Nonce} -> case length(CatenaNostra) of 
-                                        0 ->  self() ! {get_head, Mittente, Nonce}, 
+                                        0 ->  no_chain, 
                                               chain_handler(PidMain, ListaAmici, CatenaNostra);
                                         _ ->  Mittente ! {head, Nonce, hd(CatenaNostra)}, 
                                               chain_handler(PidMain, ListaAmici, CatenaNostra)
@@ -292,6 +292,7 @@ block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
   Mittente ! {get_head, self(), Ref},
   receive 
     {head, Nonce, Head} -> spawn_link(?MODULE, reconstruction_handler, [self(), Mittente, Head, [Head]]) 
+    after 5000 -> no_answer
   end,
   receive
     {rec_handler_insert_normally} -> PidChainHandler ! {catena_updated, Blocco, [Blocco|CatenaNostra]};
