@@ -228,7 +228,7 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
         {update, Mittente, Blocco} ->
           %io:format("DPL: update ricevuto~n"),
           {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
-          case proof_of_work:check({IDnuovo_blocco, Lista_di_transazioni}, Soluzione) of 
+          case proof_of_work:check({IDblocco_precedente, Lista_di_transazioni}, Soluzione) of 
             true -> 
               %io:format("DPL: blocco da aggiungere ricevuto~n"),
               PidMain ! {remove_trans, Lista_di_transazioni},
