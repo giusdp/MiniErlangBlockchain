@@ -134,7 +134,7 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
                             trans_handler(PidM, ListaAmici, TransList, spawn_link(?MODULE, failed_push_tracker, [self()]))
       end;
     _ ->
-      %io:format("DPL: translist = ~p~n", [TransList]),
+      io:format("DPL: translist = ~p~n", [TransList]),
       receive
         {give_trans_list, Sender} ->  case length(TransList) of 
                                         0 -> Sender ! {trans_list_empty};
@@ -226,14 +226,13 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
           chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]);
 
         {update, Mittente, Blocco} ->
-          %io:format("DPL: update ricevuto~n"),
-          {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
+          io:format("DPL: update ricevuto~n"),
+          {_, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
           case proof_of_work:check({IDblocco_precedente, Lista_di_transazioni}, Soluzione) of 
             true -> 
-              %io:format("DPL: blocco da aggiungere ricevuto~n"),
+              io:format("DPL: blocco da aggiungere ricevuto~n"),
               PidMain ! {remove_trans, Lista_di_transazioni},
               case length(CatenaNostra) of 
-
                 0 -> % primo blocco che si aggiunge, aggiungi direttamente
                   block_retransmission(ListaAmici, self(), Blocco),
                   chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
@@ -242,8 +241,13 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
                 case IDblocco_precedente of
                   Head_id -> % Add normale
                     block_retransmission(ListaAmici, self(), Blocco),
-                    chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
+                    chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]);
+                  none -> % ci è arrivato un primo blocco di catena, ma in questo caso la nostra catena 
+                          % non è vuota quindi possiamo ignorarlo
+                    chain_handler(PidMain, ListaAmici, CatenaNostra);
+                              
                   _ -> % Lancia handlers e crea nuova catena
+                    io:format("DPL: precedente sconosciuto, lancio block handler...~n"),
                     spawn(?MODULE, block_handler, [[CatenaNostra, self(), Mittente, Blocco]]),
                     chain_handler(PidMain, ListaAmici, CatenaNostra)
                 end
@@ -289,6 +293,7 @@ block_retransmission(ListaAmici, PidSender, Blocco) ->
 block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
   Ref = make_ref(),
   % lancia algoritmo di ricostruzione
+  io:format("DPL: asking for head to ~p~n", [Mittente]),
   Mittente ! {get_head, self(), Ref},
   receive 
     {head, Nonce, Head} -> spawn_link(?MODULE, reconstruction_handler, [self(), Mittente, Head, [Head]]) 
@@ -355,7 +360,7 @@ miner_handler(TransHandler, ChainHandler) ->
 miner(TransList, IDBlocco, Pid) -> 
     %io:format("Mining...~n"),
     Sol = proof_of_work:solve({IDBlocco, TransList}),
-    %io:format("Mining Finito ~p~n", [Sol]),
+    io:format("DPL: Mining Finito ~p~n", [Sol]),
     Pid ! {mining_finished, Sol}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%%
@@ -410,15 +415,15 @@ run() ->
   register(depalma_liberato, Main).
 
 test() ->
-  Prof = spawn(teacher_node, main, []),
+  spawn(teacher_node, main, []),
   sleep(2), % Tempo al teacher di prepararsi
   % Act1 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
   % Act2 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
   % Act3 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
   % Act4 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
-  Act1 = spawn(nodo1, test, []),
-  Act2 = spawn(nodo2, test, []),
-  Act3 = spawn(nodo3, test, []),
+  spawn(nodo1, test, []),
+  spawn(nodo2, test, []),
+  spawn(nodo3, test, []),
   ChainHandler = spawn(?MODULE, chain_handler, [none, [], []]),
   TransHandler = spawn(?MODULE, trans_handler, [none, [], [], []]),
   MinerHandler = spawn (?MODULE, miner_handler, [TransHandler, ChainHandler]),
