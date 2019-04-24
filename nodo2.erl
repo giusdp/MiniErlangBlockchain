@@ -230,28 +230,32 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
           {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
           case proof_of_work:check({IDblocco_precedente, Lista_di_transazioni}, Soluzione) of 
             true -> 
+              {Head_id, _, _, _} = hd(CatenaNostra),
               %io:format("DPL: blocco da aggiungere ricevuto~n"),
-              PidMain ! {remove_trans, Lista_di_transazioni},
-              case length(CatenaNostra) of 
-
-                0 -> % primo blocco che si aggiunge, aggiungi direttamente
-                  block_retransmission(ListaAmici, self(), Blocco),
-                  chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
-                _ ->
-                {Head_id, _, _, _} = hd(CatenaNostra),
-                case IDblocco_precedente of
-                  Head_id -> % Add normale
-                    block_retransmission(ListaAmici, self(), Blocco),
-                    chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
-                  none -> % ci è arrivato un primo blocco di catena, ma in questo caso la nostra catena 
-                          % non è vuota quindi possiamo ignorarlo
-                    chain_handler(PidMain, ListaAmici, CatenaNostra);
-                              
-                  _ -> % Lancia handlers e crea nuova catena
-                    spawn(?MODULE, block_handler, [[CatenaNostra, self(), Mittente, Blocco]]),
-                    chain_handler(PidMain, ListaAmici, CatenaNostra)
-                end
+              case IDnuovo_blocco of
+                Head_id -> chain_handler(PidMain, ListaAmici, CatenaNostra);
+                _ -> 
+                  PidMain ! {remove_trans, Lista_di_transazioni},
+                  case length(CatenaNostra) of 
+                    0 -> % primo blocco che si aggiunge, aggiungi direttamente
+                      block_retransmission(ListaAmici, self(), Blocco),
+                      chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
+                    _ ->
+                    case IDblocco_precedente of
+                      Head_id -> % Add normale
+                        block_retransmission(ListaAmici, self(), Blocco),
+                        chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]);
+                      none -> % ci è arrivato un primo blocco di catena, ma in questo caso la nostra catena 
+                              % non è vuota quindi possiamo ignorarlo
+                        chain_handler(PidMain, ListaAmici, CatenaNostra);
+                      _ -> % Lancia handlers e crea nuova catena
+                        %io:format("DPL: precedente sconosciuto, lancio block handler...~n"),
+                        spawn(?MODULE, block_handler, [CatenaNostra, self(), Mittente, Blocco]),
+                        chain_handler(PidMain, ListaAmici, CatenaNostra)
+                    end
+                  end
               end;
+            
             
             false -> %io:format("Blocco falso ricevuto >.>~n"),
             chain_handler(PidMain, ListaAmici, CatenaNostra) % blocco falso, non fare niente
