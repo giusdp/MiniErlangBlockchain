@@ -152,7 +152,7 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
         {push, {IDtransazione, Payload}} ->
           %io:format("DPL: transazione ricevuta, IDtransazione: ~p~n", [IDtransazione]),
             case lists:member(IDtransazione, TransList) of
-              true -> %io:format("DPL: Transazione con id: ~p già presente~n", [IDtransazione]),
+              true ->% io:format("DPL: Transazione con id: ~p già presente~n", [IDtransazione]),
                       trans_handler(PidMain, ListaAmici, TransList, PidTracker);
               false -> %io:format("DPL: Transazione con id: ~p è nuova ~n", [IDtransazione]),
               %io:format("DPL: Lista Trans: ~p ~n", [TransList]),
@@ -231,29 +231,30 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
           {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
           case proof_of_work:check({IDblocco_precedente, Lista_di_transazioni}, Soluzione) of 
             true -> 
-              {Head_id, _, _, _} = hd(CatenaNostra),
               io:format("DPL: blocco da aggiungere ricevuto~n"),
-              case IDnuovo_blocco of
-                Head_id -> chain_handler(PidMain, ListaAmici, CatenaNostra);
-                _ -> 
-                  PidMain ! {remove_trans, Lista_di_transazioni},
-                  case length(CatenaNostra) of 
-                    0 -> % primo blocco che si aggiunge, aggiungi direttamente
-                      block_retransmission(ListaAmici, self(), Blocco),
-                      chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
-                    _ ->
-                    case IDblocco_precedente of
-                      Head_id -> % Add normale
-                        block_retransmission(ListaAmici, self(), Blocco),
-                        chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]);
-                      none -> % ci è arrivato un primo blocco di catena, ma in questo caso la nostra catena 
-                              % non è vuota quindi possiamo ignorarlo
-                        chain_handler(PidMain, ListaAmici, CatenaNostra);
-                      _ -> % Lancia handlers e crea nuova catena
-                        io:format("DPL: precedente sconosciuto, lancio block handler...~n"),
-                        spawn(?MODULE, block_handler, [CatenaNostra, self(), Mittente, Blocco]),
-                        chain_handler(PidMain, ListaAmici, CatenaNostra)
-                    end
+              PidMain ! {remove_trans, Lista_di_transazioni},
+              case length(CatenaNostra) of 
+                0 -> % primo blocco che si aggiunge, aggiungi direttamente
+                  block_retransmission(ListaAmici, self(), Blocco),
+                  chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]); 
+                _ ->
+                  {Head_id, _, _, _} = hd(CatenaNostra),
+                  case IDnuovo_blocco of
+                    Head_id -> 
+                      chain_handler(PidMain, ListaAmici, CatenaNostra);
+                    _ -> 
+                      case IDblocco_precedente of
+                        Head_id -> % Add normale
+                          block_retransmission(ListaAmici, self(), Blocco),
+                          chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]);
+                        none -> % ci è arrivato un primo blocco di catena, ma in questo caso la nostra catena 
+                                % non è vuota quindi possiamo ignorarlo
+                          chain_handler(PidMain, ListaAmici, CatenaNostra);
+                        _ -> % Lancia handlers e crea nuova catena
+                          io:format("DPL: precedente sconosciuto, lancio block handler...~n"),
+                          spawn(?MODULE, block_handler, [CatenaNostra, self(), Mittente, Blocco]),
+                          chain_handler(PidMain, ListaAmici, CatenaNostra)
+                      end
                   end
               end;
 
@@ -391,9 +392,18 @@ main(Handler, TransHandler, ChainHandler, MinerHandler) ->
     {list_from_handler, ListaAmici, Mittente, Nonce} -> Mittente ! {friends, Nonce, ListaAmici};
 
     % gestiscono la lista che arriva dal prof
-    {sad} -> %io:format("DPL: sad received :-( ~n"),
-      teacher_node ! {get_friends, self(), Ref};
+    {sad} -> io:format("DPL: sad received :-( ~n"),
+      teacher_node ! {get_friends, self(), Ref},
+      receive 
+        {friends, Nonce, ListaAmici} ->
+          case Nonce of
+            Ref -> Handler ! {list_from_main, ListaAmici};
+            _   -> ok
+          end
+      end;
 
+
+    % TODO togliere i nonce siccome ref handler si occupa dei messaggi con i nonce
     {friends, Nonce, ListaAmici} ->
     case Nonce of
       Ref -> Handler ! {list_from_main, ListaAmici};
