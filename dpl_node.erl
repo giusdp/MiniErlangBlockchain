@@ -40,7 +40,6 @@ handler(ListaAmici, PidMain, PidCounter) ->
     _ ->
         %io:format("DPL: Friends: ~p~n", [ListaAmici]),
         NumeroAmici = length(ListaAmici),
-        Ref = make_ref(),
         % controlla i messaggi da mandare, compresa la richiesta di amici
         case NumeroAmici of
           0 -> PidMain ! {sad};
@@ -69,7 +68,7 @@ handler(ListaAmici, PidMain, PidCounter) ->
                     end;
 
           % riceve la lista degli amici di un amico per aggiungerli/o ai nostri (risposta dei nostri get_friends)
-          {friends, Nonce, ListaNuova} -> %quanti ne mancano
+          {friends, ListaNuova} -> %quanti ne mancano
                     NoDuplicates = lists:filter(fun(Elem) -> not lists:member(Elem, ListaAmici) end, ListaNuova),
                     Amici_only = lists:delete(PidMain, NoDuplicates),
                     case length(Amici_only) of
@@ -135,7 +134,7 @@ trans_handler(PidMain, ListaAmici, TransList, PidTracker) ->
                             trans_handler(PidM, ListaAmici, TransList, spawn_link(?MODULE, failed_push_tracker, [self()]))
       end;
     _ ->
-      io:format("DPL: translist = ~p~n", [TransList]),
+      %io:format("DPL: translist = ~p~n", [TransList]),
       receive
         {give_trans_list, Sender} ->  case length(TransList) of
                                         0 -> Sender ! {trans_list_empty};
@@ -182,10 +181,6 @@ failed_push_tracker(PidTransHandler) ->
                                   failed_push_tracker(PidTransHandler)
   end.
 
-
-% send_failed_push(Amico, FailedPush) ->
-%   lists:foreach(fun(Transazione) -> Amico ! {push, Transazione} end, FailedPush).
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Chain & Blocks %%%%%
 
 chain_handler(PidMain, ListaAmici, CatenaNostra) ->
@@ -198,7 +193,7 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
                             chain_handler(PidM, ListaAmici, CatenaNostra)
       end;
     _ ->
-      io:format("DPL: ChainHandler catena: ~p~n", [CatenaNostra]),
+      %io:format("DPL: ChainHandler catena: ~p~n", [CatenaNostra]),
       receive
         {get_previous, Mittente, Nonce, Idblocco} ->
           spawn(fun() -> give_previous_block(Mittente, Nonce, Idblocco, CatenaNostra) end),
@@ -227,11 +222,11 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
           chain_handler(PidMain, ListaAmici, [Blocco|CatenaNostra]);
 
         {update, Mittente, Blocco} ->
-          io:format("DPL: update ricevuto~n"),
+          %io:format("DPL: update ricevuto~n"),
           {IDnuovo_blocco, IDblocco_precedente, Lista_di_transazioni, Soluzione} = Blocco,
           case proof_of_work:check({IDblocco_precedente, Lista_di_transazioni}, Soluzione) of 
             true -> 
-              io:format("DPL: blocco da aggiungere ricevuto~n"),
+              %io:format("DPL: blocco da aggiungere ricevuto~n"),
               PidMain ! {remove_trans, Lista_di_transazioni},
               case length(CatenaNostra) of 
                 0 -> % primo blocco che si aggiunge, aggiungi direttamente
@@ -251,7 +246,7 @@ chain_handler(PidMain, ListaAmici, CatenaNostra) ->
                                 % non è vuota quindi possiamo ignorarlo
                           chain_handler(PidMain, ListaAmici, CatenaNostra);
                         _ -> % Lancia handlers e crea nuova catena
-                          io:format("DPL: precedente sconosciuto, lancio block handler...~n"),
+                          %io:format("DPL: precedente sconosciuto, lancio block handler...~n"),
                           spawn(?MODULE, block_handler, [CatenaNostra, self(), Mittente, Blocco]),
                           chain_handler(PidMain, ListaAmici, CatenaNostra)
                       end
@@ -296,12 +291,11 @@ block_retransmission(ListaAmici, PidSender, Blocco) ->
   end, ListaAmici).
 
 block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
-  Ref = make_ref(),
   % lancia algoritmo di ricostruzione
-  io:format("DPL: asking for head to ~p~n", [Mittente]),
+  %io:format("DPL: asking for head to ~p~n", [Mittente]),
   spawn(?MODULE, ref_handler, [{get_head, Mittente}, self(), Mittente]),%Mittente ! {get_head, self(), Ref},
   receive
-    {head, Nonce, Head} -> spawn_link(?MODULE, reconstruction_handler, [self(), Mittente, Head, [Head]])
+    {head, Head} -> spawn_link(?MODULE, reconstruction_handler, [self(), Mittente, Head, [Head]])
     after 5000 -> no_answer
   end,
   receive
@@ -310,11 +304,10 @@ block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
   end.
 
 reconstruction_handler(PidChainHandler, Mittente, Blocco, CatenaMittente) ->
-  Ref = make_ref(),
   {_, IDblocco_precedente, _, _} = Blocco,
   spawn(?MODULE, ref_handler, [{get_previous, Mittente, IDblocco_precedente}, self(), Mittente]),%Mittente ! {get_previous, self(), Ref, IDblocco_precedente},
   receive
-    {previous, Nonce, {Id, Id_previous, Lista_trans, Sol}} ->
+    {previous, {Id, Id_previous, Lista_trans, Sol}} ->
       case proof_of_work:check({Id, Lista_trans}, Sol) of
         true -> % va avanti da specifica
           case Id of
@@ -365,7 +358,7 @@ miner_handler(TransHandler, ChainHandler) ->
 miner(TransList, IDBlocco, Pid) ->
     %io:format("Mining...~n"),
     Sol = proof_of_work:solve({IDBlocco, TransList}),
-    io:format("DPL: Mining Finito ~p~n", [Sol]),
+    %io:format("DPL: Mining Finito ~p~n", [Sol]),
     Pid ! {mining_finished, Sol}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% Main %%%%%%%%%%%%%%%
@@ -392,7 +385,7 @@ main(Handler, TransHandler, ChainHandler, MinerHandler) ->
     {list_from_handler, ListaAmici, Mittente, Nonce} -> Mittente ! {friends, Nonce, ListaAmici};
 
     % gestiscono la lista che arriva dal prof
-    {sad} -> io:format("DPL: sad received :-( ~n"),
+    {sad} -> %io:format("DPL: sad received :-( ~n"),
       teacher_node ! {get_friends, self(), Ref},
       receive 
         {friends, Nonce, ListaAmici} ->
@@ -402,8 +395,6 @@ main(Handler, TransHandler, ChainHandler, MinerHandler) ->
           end
       end;
 
-
-    % TODO togliere i nonce siccome ref handler si occupa dei messaggi con i nonce
     {friends, Nonce, ListaAmici} ->
     case Nonce of
       Ref -> Handler ! {list_from_main, ListaAmici};
@@ -432,12 +423,12 @@ ref_handler(Messaggio, PidHandler, Destinatario) ->
          receive
            {friends, Nonce, ListaAmici} ->
             case Nonce of
-              Ref -> PidHandler ! {friends, Nonce, ListaAmici};
+              Ref -> PidHandler ! {friends, ListaAmici};
               _   -> ok
             end;
            {head, Nonce, Blocco} ->
              case Nonce of
-               Ref -> PidHandler ! {head, Nonce, Blocco};
+               Ref -> PidHandler ! {head, Blocco};
                _   -> ok
              end
              after 5000 -> no_answer
@@ -447,7 +438,7 @@ ref_handler(Messaggio, PidHandler, Destinatario) ->
          receive
            {previous, Nonce, Blocco} ->
              case Nonce of
-               Ref -> PidHandler ! {previous, Nonce, Blocco};
+               Ref -> PidHandler ! {previous, Blocco};
                _   -> ok
              end
              after 5000 -> no_answer
@@ -464,37 +455,37 @@ run() ->
   Main = spawn(?MODULE, main, [FriendHandler, TransHandler, ChainHandler, MinerHandler]),
   register(depalma_liberato, Main).
 
-test() ->
-  spawn(teacher_node, main, []),
-  sleep(2), % Tempo al teacher di prepararsi
-  % Act1 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
-  % Act2 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
-  % Act3 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
-  % Act4 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
-  spawn(nodo1, test, []),
-  spawn(nodo2, test, []),
-  spawn(nodo3, test, []),
-  ChainHandler = spawn(?MODULE, chain_handler, [none, [], []]),
-  TransHandler = spawn(?MODULE, trans_handler, [none, [], [], []]),
-  MinerHandler = spawn (?MODULE, miner_handler, [TransHandler, ChainHandler]),
-  FriendHandler = spawn(?MODULE, handler, [[], none, none]),
-  Main = spawn(?MODULE, main, [FriendHandler, TransHandler, ChainHandler, MinerHandler]),
-  register(depalma_liberato, Main),
-  % TODO: Fare l'unregister nella test, dopo aver controllato che tutti hanno il pid del main.
-  % TODO: gestire la morte
+% test() ->
+%   spawn(teacher_node, main, []),
+%   sleep(2), % Tempo al teacher di prepararsi
+%   % Act1 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
+%   % Act2 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
+%   % Act3 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
+%   % Act4 = spawn(fun() -> teacher_node ! {get_friends, self(), make_ref()} end),
+%   spawn(nodo1, test, []),
+%   spawn(nodo2, test, []),
+%   spawn(nodo3, test, []),
+%   ChainHandler = spawn(?MODULE, chain_handler, [none, [], []]),
+%   TransHandler = spawn(?MODULE, trans_handler, [none, [], [], []]),
+%   MinerHandler = spawn (?MODULE, miner_handler, [TransHandler, ChainHandler]),
+%   FriendHandler = spawn(?MODULE, handler, [[], none, none]),
+%   Main = spawn(?MODULE, main, [FriendHandler, TransHandler, ChainHandler, MinerHandler]),
+%   register(depalma_liberato, Main),
+%   % TODO: Fare l'unregister nella test, dopo aver controllato che tutti hanno il pid del main.
+%   % TODO: gestire la morte
 
-  sleep(15),
-  io:format("Start transaction test...~n"),
-  spawn(fun() -> test_transactions(Main, 0) end),
-  test_ok.
+%   sleep(15),
+%   %io:format("Start transaction test...~n"),
+%   spawn(fun() -> test_transactions(Main, 0) end),
+%   test_ok.
 
-test_transactions(Main, Counter) ->
-  sleep(3),
-  case Counter of
-    20 -> ok;
-    _ ->
-        case rand:uniform(2) of
-          1 -> Main ! {push, {123, ciao}}, test_transactions(Main, Counter + 1);
-          _ -> Main ! {push, {rand:uniform(100), ciao}}, test_transactions(Main, Counter + 1)
-        end
-  end.
+% test_transactions(Main, Counter) ->
+%   sleep(3),
+%   case Counter of
+%     20 -> ok;
+%     _ ->
+%         case rand:uniform(2) of
+%           1 -> Main ! {push, {123, ciao}}, test_transactions(Main, Counter + 1);
+%           _ -> Main ! {push, {rand:uniform(100), ciao}}, test_transactions(Main, Counter + 1)
+%         end
+%   end.

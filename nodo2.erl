@@ -40,7 +40,6 @@ handler(ListaAmici, PidMain, PidCounter) ->
     _ ->
         %io:format("Nodo2: Friends: ~p~n", [ListaAmici]),
         NumeroAmici = length(ListaAmici),
-        Ref = make_ref(),
         % controlla i messaggi da mandare, compresa la richiesta di amici
         case NumeroAmici of
           0 -> PidMain ! {sad};
@@ -69,7 +68,7 @@ handler(ListaAmici, PidMain, PidCounter) ->
                     end;
 
           % riceve la lista degli amici di un amico per aggiungerli/o ai nostri (risposta dei nostri get_friends)
-          {friends, Nonce, ListaNuova} -> %quanti ne mancano
+          {friends, ListaNuova} -> %quanti ne mancano
                     NoDuplicates = lists:filter(fun(Elem) -> not lists:member(Elem, ListaAmici) end, ListaNuova),
                     Amici_only = lists:delete(PidMain, NoDuplicates),
                     case length(Amici_only) of
@@ -296,12 +295,11 @@ block_retransmission(ListaAmici, PidSender, Blocco) ->
   end, ListaAmici).
 
 block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
-  Ref = make_ref(),
   % lancia algoritmo di ricostruzione
   %io:format("Nodo2: asking for head to ~p~n", [Mittente]),
   spawn(?MODULE, ref_handler, [{get_head, Mittente}, self(), Mittente]),%Mittente ! {get_head, self(), Ref},
   receive
-    {head, Nonce, Head} -> spawn_link(?MODULE, reconstruction_handler, [self(), Mittente, Head, [Head]])
+    {head, Head} -> spawn_link(?MODULE, reconstruction_handler, [self(), Mittente, Head, [Head]])
     after 5000 -> no_answer
   end,
   receive
@@ -310,11 +308,10 @@ block_handler(CatenaNostra, PidChainHandler, Mittente, Blocco) ->
   end.
 
 reconstruction_handler(PidChainHandler, Mittente, Blocco, CatenaMittente) ->
-  Ref = make_ref(),
   {_, IDblocco_precedente, _, _} = Blocco,
   spawn(?MODULE, ref_handler, [{get_previous, Mittente, IDblocco_precedente}, self(), Mittente]),%Mittente ! {get_previous, self(), Ref, IDblocco_precedente},
   receive
-    {previous, Nonce, {Id, Id_previous, Lista_trans, Sol}} ->
+    {previous, {Id, Id_previous, Lista_trans, Sol}} ->
       case proof_of_work:check({Id, Lista_trans}, Sol) of
         true -> % va avanti da specifica
           case Id of
@@ -431,12 +428,12 @@ ref_handler(Messaggio, PidHandler, Destinatario) ->
          receive
            {friends, Nonce, ListaAmici} ->
             case Nonce of
-              Ref -> PidHandler ! {friends, Nonce, ListaAmici};
+              Ref -> PidHandler ! {friends, ListaAmici};
               _   -> ok
             end;
            {head, Nonce, Blocco} ->
              case Nonce of
-               Ref -> PidHandler ! {head, Nonce, Blocco};
+               Ref -> PidHandler ! {head, Blocco};
                _   -> ok
              end
              after 5000 -> no_answer
@@ -446,7 +443,7 @@ ref_handler(Messaggio, PidHandler, Destinatario) ->
          receive
            {previous, Nonce, Blocco} ->
              case Nonce of
-               Ref -> PidHandler ! {previous, Nonce, Blocco};
+               Ref -> PidHandler ! {previous, Blocco};
                _   -> ok
              end
              after 5000 -> no_answer
